@@ -12,13 +12,16 @@ public enum ConfirmationState
 
 public sealed class ConfirmationSession
 {
-    private const int ConfirmRetryFrameInterval = 6;
     private const int RequiredDistinctPageFrames = 2;
+    private const double ConfirmationPointJitterTolerance = 0.02;
 
     private readonly string _sessionId;
     private readonly ActionIntent _intent;
     private readonly PageFingerprint _sourcePageFingerprint;
+    private readonly IReadOnlySet<string> _sourcePageRouteIds;
     private PageFingerprint? _confirmationDialogFingerprint;
+    private RelativePoint? _confirmationDialogPoint;
+    private HashSet<string> _confirmationDialogRouteIds = new(StringComparer.Ordinal);
     private long _lastObservedFrameSequence;
     private long _lastConfirmCommandFrameSequence = -1;
     private int _distinctPageFrameCount;
@@ -36,6 +39,9 @@ public sealed class ConfirmationSession
         _sessionId = sessionId;
         _intent = intent;
         _sourcePageFingerprint = intent.SourcePageFingerprint;
+        _sourcePageRouteIds = sourceObservation.RouteIds
+            .Where(routeId => !string.IsNullOrWhiteSpace(routeId))
+            .ToHashSet(StringComparer.Ordinal);
         _lastObservedFrameSequence = sourceObservation.FrameSequence;
         State = ConfirmationState.AwaitingDialog;
     }
@@ -79,7 +85,20 @@ public sealed class ConfirmationSession
                 : ConfirmationDecision.Failed("确认流程已经失败。");
         }
 
-        if (observation.Fingerprint == _sourcePageFingerprint)
+        if (State == ConfirmationState.ConfirmClicked
+            && _intent is ConfirmCenterDialogIntent
+            && IsSourcePageStillVisible(observation)
+            && observation.Fingerprint != _sourcePageFingerprint)
+        {
+            _distinctPageFrameCount = 0;
+            State = ConfirmationState.Completed;
+            HasSourcePageReturned = true;
+            return ConfirmationDecision.Completed(
+                "\u786e\u8ba4\u540e\u6765\u6e90\u9875\u9762\u5185\u5bb9\u5df2\u53d8\u5316\uff0c\u5141\u8bb8\u7ee7\u7eed\u5904\u7406\u65b0\u9875\u9762\u72b6\u6001\u3002",
+                _intent);
+        }
+
+        if (IsSourcePageStillVisible(observation))
         {
             _distinctPageFrameCount = 0;
             HasSourcePageReturned = _skipCommandSent || State == ConfirmationState.ConfirmClicked;
@@ -92,10 +111,10 @@ public sealed class ConfirmationSession
         }
 
         if (State == ConfirmationState.ConfirmClicked
-            && observation.HasCenterConfirmation
-            && observation.Fingerprint == _confirmationDialogFingerprint)
+            && IsSameConfirmationDialog(observation))
         {
-            return ConfirmationDecision.Wait("原确认弹窗仍然存在，等待页面响应。", _intent);
+            _distinctPageFrameCount = 0;
+            return ConfirmationDecision.Wait("原确认弹窗仍然存在，禁止重复点击。", _intent);
         }
 
         if (!_skipCommandSent && _intent is SkipCurrentContentIntent)
@@ -153,22 +172,19 @@ public sealed class ConfirmationSession
         if (State == ConfirmationState.AwaitingDialog)
         {
             _confirmationDialogFingerprint = observation.Fingerprint;
+            _confirmationDialogPoint = observation.CenterConfirmationPoint;
+            _confirmationDialogRouteIds = observation.RouteIds
+                .Where(routeId => !string.IsNullOrWhiteSpace(routeId))
+                .ToHashSet(StringComparer.Ordinal);
             return ConfirmationDecision.ExecuteConfirm(
                 "检测到中心确认弹窗。",
                 _intent,
                 observation.CenterConfirmationPoint.Value);
         }
 
-        if (State == ConfirmationState.ConfirmClicked
-            && observation.FrameSequence - _lastConfirmCommandFrameSequence >= ConfirmRetryFrameInterval)
-        {
-            return ConfirmationDecision.ExecuteConfirm(
-                "确认弹窗仍然存在，允许重试确认命令。",
-                _intent,
-                observation.CenterConfirmationPoint.Value);
-        }
-
-        return ConfirmationDecision.Wait("确认命令已经发送，等待页面响应。", _intent);
+        return ConfirmationDecision.Wait(
+            "确认命令已经发送，弹窗仍存在时禁止重复点击。",
+            _intent);
     }
 
     public ConfirmationDecision MarkSkipCommandSent(long frameSequence)
@@ -200,6 +216,45 @@ public sealed class ConfirmationSession
         _lastObservedFrameSequence = Math.Max(_lastObservedFrameSequence, frameSequence);
         _distinctPageFrameCount = 0;
         return ConfirmationDecision.Wait("确认命令已经发送，等待来源页面离开。", _intent);
+    }
+
+    private bool IsSourcePageStillVisible(PageObservation observation)
+    {
+        if (observation.Fingerprint == _sourcePageFingerprint)
+        {
+            return true;
+        }
+
+        return _sourcePageRouteIds.Count > 0
+               && observation.PrimaryRouteId is { } primaryRouteId
+               && _sourcePageRouteIds.Contains(primaryRouteId);
+    }
+
+    private bool IsSameConfirmationDialog(PageObservation observation)
+    {
+        if (!observation.HasCenterConfirmation)
+        {
+            return false;
+        }
+
+        if (observation.Fingerprint == _confirmationDialogFingerprint)
+        {
+            return true;
+        }
+
+        if (_confirmationDialogPoint is { } previousPoint
+            && observation.CenterConfirmationPoint is { } currentPoint
+            && Math.Abs(previousPoint.X - currentPoint.X) <= ConfirmationPointJitterTolerance
+            && Math.Abs(previousPoint.Y - currentPoint.Y) <= ConfirmationPointJitterTolerance)
+        {
+            return true;
+        }
+
+        var currentRouteIds = observation.RouteIds
+            .Where(routeId => !string.IsNullOrWhiteSpace(routeId))
+            .ToHashSet(StringComparer.Ordinal);
+        return _confirmationDialogRouteIds.Count > 0
+               && _confirmationDialogRouteIds.SetEquals(currentRouteIds);
     }
 }
 

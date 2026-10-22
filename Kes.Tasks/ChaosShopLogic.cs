@@ -73,9 +73,53 @@ public static class ChaosShopLogic
         }
 
         var targetCount = Math.Min(count, cards.Count);
+        var selected = SelectPriorityCardIndexes(cards, priority, targetCount).ToList();
+        var used = selected.ToHashSet();
+
+        if (isRemoveAction && selected.Count < targetCount)
+        {
+            SelectFallback(
+                cards,
+                selected,
+                used,
+                targetCount,
+                card => card.Type.Contains("咒术", StringComparison.Ordinal)
+                        || card.Type.Contains("诅咒", StringComparison.Ordinal));
+        }
+
+        if (isRemoveAction && preferBaseCards && selected.Count < targetCount)
+        {
+            SelectFallback(
+                cards,
+                selected,
+                used,
+                targetCount,
+                card => card.Type.Contains("基础", StringComparison.Ordinal));
+        }
+
+        if (selected.Count < targetCount)
+        {
+            SelectFallback(cards, selected, used, targetCount, _ => true);
+        }
+
+        return selected;
+    }
+
+    public static IReadOnlyList<int> SelectPriorityCardIndexes(
+        IReadOnlyList<ChaosCardInfo> cards,
+        IReadOnlyList<string> priority,
+        int count)
+    {
+        ArgumentNullException.ThrowIfNull(cards);
+        ArgumentNullException.ThrowIfNull(priority);
+        if (cards.Count == 0 || count <= 0)
+        {
+            return Array.Empty<int>();
+        }
+
+        var targetCount = Math.Min(count, cards.Count);
         var selected = new List<int>(targetCount);
         var used = new HashSet<int>();
-
         foreach (var target in priority.Where(name => !string.IsNullOrWhiteSpace(name)))
         {
             for (var index = 0; index < cards.Count && selected.Count < targetCount; index++)
@@ -98,18 +142,31 @@ public static class ChaosShopLogic
             }
         }
 
-        if (isRemoveAction && selected.Count < targetCount)
+        return selected;
+    }
+
+    public static IReadOnlyList<int> SelectFallbackCardIndexes(
+        IReadOnlyList<ChaosCardInfo> cards,
+        int count,
+        bool preferBaseCards)
+    {
+        ArgumentNullException.ThrowIfNull(cards);
+        if (cards.Count == 0 || count <= 0)
         {
-            SelectFallback(
-                cards,
-                selected,
-                used,
-                targetCount,
-                card => card.Type.Contains("咒术", StringComparison.Ordinal)
-                        || card.Type.Contains("诅咒", StringComparison.Ordinal));
+            return Array.Empty<int>();
         }
 
-        if (isRemoveAction && preferBaseCards && selected.Count < targetCount)
+        var targetCount = Math.Min(count, cards.Count);
+        var selected = new List<int>(targetCount);
+        var used = new HashSet<int>();
+        SelectFallback(
+            cards,
+            selected,
+            used,
+            targetCount,
+            card => card.Type.Contains("咒术", StringComparison.Ordinal)
+                    || card.Type.Contains("诅咒", StringComparison.Ordinal));
+        if (preferBaseCards && selected.Count < targetCount)
         {
             SelectFallback(
                 cards,

@@ -10,5 +10,6 @@ public enum InputKey
     Up,
     Down,
     Left,
-    Right
+    Right,
+    F1
 }

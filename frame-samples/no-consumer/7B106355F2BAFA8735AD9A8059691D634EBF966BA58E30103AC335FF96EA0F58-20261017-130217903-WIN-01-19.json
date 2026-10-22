@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017130202874",
+  "consumerId": "no-consumer",
+  "frameSequence": 19,
+  "capturedAt": "2026-10-17T13:02:17.9035952+08:00",
+  "archivedAt": "2026-10-17T13:02:18.4469549+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "7B106355F2BAFA8735AD9A8059691D634EBF966BA58E30103AC335FF96EA0F58-20261017-130217903-WIN-01-19.png",
+  "imageSha256": "7B106355F2BAFA8735AD9A8059691D634EBF966BA58E30103AC335FF96EA0F58",
+  "textSignature": "22D73D3CD3B84679E2585AEEE37E29111CB481AD6A34CC10BC7E2DEB39E2FDFB",
+  "ocr": {
+    "text": "",
+    "score": 0,
+    "lines": []
+  }
+}

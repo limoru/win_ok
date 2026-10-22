@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261015230142963",
+  "consumerId": "rest",
+  "frameSequence": 59,
+  "capturedAt": "2026-10-15T23:02:35.7071683+08:00",
+  "archivedAt": "2026-10-15T23:02:39.0940786+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "A2F86319A449E5C5EB89DF7E55D026A43A5338309B5323EFBCD94A35E510986C-20261015-230235707-WIN-01-59.png",
+  "imageSha256": "A2F86319A449E5C5EB89DF7E55D026A43A5338309B5323EFBCD94A35E510986C",
+  "textSignature": "3F7A92BDD38993EB69CC84E1B84992EA14AB75D50D2D2429785D4D6A28903284",
+  "ocr": {
+    "text": "3007 /3007\r\n258\r\ncoo\r\n\u5FC3\u00B7\r\nC\u671F\r\n\u8BAD\u7EC3\r\n\u514D\u8D39\r\n\uD83D\uDE04\r\nU\r\n\u51A5\u60F3\r\n80\r\n\u5C0F\r\n\u4F11\u606F\r\n3\r\n\u4EF7\r\n\u514D\u8D39\r\n\u8BF7\u9009\u62E9\u8981\u5728\u5B89\u5168\u533A\u91C7\u53D6\u76841\u4E2A\u884C\u52A8\u3002\r\n\u8DF3\u8FC7",
+    "score": 0.8512198661587068,
+    "lines": [
+      {
+        "text": "3007 /3007",
+        "score": 0.9467189133167266,
+        "x": 244,
+        "y": 21,
+        "width": 173,
+        "height": 28
+      },
+      {
+        "text": "258",
+        "score": 0.9995778203010559,
+        "x": 1137,
+        "y": 28,
+        "width": 56,
+        "height": 35
+      },
+      {
+        "text": "coo",
+        "score": 0.225064883629481,
+        "x": 23,
+        "y": 51,
+        "width": 163,
+        "height": 45
+      },
+      {
+        "text": "\u5FC3\u00B7",
+        "score": 0.5011646449565887,
+        "x": 333,
+        "y": 69,
+        "width": 46,
+        "height": 22
+      },
+      {
+        "text": "C\u671F",
+        "score": 0.1498396098613739,
+        "x": 430,
+        "y": 51,
+        "width": 89,
+        "height": 40
+      },
+      {
+        "text": "\u8BAD\u7EC3",
+        "score": 0.999920666217804,
+        "x": 1296,
+        "y": 149,
+        "width": 69,
+        "height": 46
+      },
+      {
+        "text": "\u514D\u8D39",
+        "score": 0.9992330372333527,
+        "x": 1296,
+        "y": 191,
+        "width": 63,
+        "height": 38
+      },
+      {
+        "text": "\uD83D\uDE04",
+        "score": 0.6291389465332031,
+        "x": 1026,
+        "y": 412,
+        "width": 17,
+        "height": 16
+      },
+      {
+        "text": "U",
+        "score": 0.4999856948852539,
+        "x": 1094,
+        "y": 505,
+        "width": 22,
+        "height": 25
+      },
+      {
+        "text": "\u51A5\u60F3",
+        "score": 0.999970555305481,
+        "x": 1265,
+        "y": 499,
+        "width": 69,
+        "height": 42
+      },
+      {
+        "text": "80",
+        "score": 0.9929488003253937,
+        "x": 1285,
+        "y": 539,
+        "width": 47,
+        "height": 39
+      },
+      {
+        "text": "\u5C0F",
+        "score": 0.95554518699646,
+        "x": 1362,
+        "y": 526,
+        "width": 31,
+        "height": 37
+      },
+      {
+        "text": "\u4F11\u606F",
+        "score": 0.9998693764209747,
+        "x": 456,
+        "y": 634,
+        "width": 68,
+        "height": 43
+      },
+      {
+        "text": "3",
+        "score": 0.45753851532936096,
+        "x": 600,
+        "y": 620,
+        "width": 35,
+        "height": 60
+      },
+      {
+        "text": "\u4EF7",
+        "score": 0.08690871298313141,
+        "x": 935,
+        "y": 597,
+        "width": 47,
+        "height": 54
+      },
+      {
+        "text": "\u514D\u8D39",
+        "score": 0.9978070259094238,
+        "x": 463,
+        "y": 670,
+        "width": 63,
+        "height": 44
+      },
+      {
+        "text": "\u8BF7\u9009\u62E9\u8981\u5728\u5B89\u5168\u533A\u91C7\u53D6\u76841\u4E2A\u884C\u52A8\u3002",
+        "score": 0.9992398023605347,
+        "x": 1131,
+        "y": 720,
+        "width": 414,
+        "height": 38
+      },
+      {
+        "text": "\u8DF3\u8FC7",
+        "score": 0.9997974932193756,
+        "x": 1462,
+        "y": 804,
+        "width": 71,
+        "height": 40
+      }
+    ]
+  }
+}

@@ -16,6 +16,8 @@ public sealed class TemplateFeatureMatcher : IFeatureMatcher, IRuntimeFeatureMat
     private readonly object _runtimeTemplateGate = new();
     private const int MaximumRuntimeTemplatesPerFeature = 5;
     private readonly Dictionary<string, List<FeatureTemplate>> _runtimeTemplates = new(StringComparer.Ordinal);
+    private readonly Dictionary<TemplateScaleKey, BgraFrame> _templateScaleCache = [];
+    private readonly object _templateScaleGate = new();
 
     public TemplateFeatureMatcher(
         FeatureTemplateCatalog catalog,
@@ -75,16 +77,17 @@ public sealed class TemplateFeatureMatcher : IFeatureMatcher, IRuntimeFeatureMat
         var results = new List<FeatureBox>();
         foreach (var template in templates)
         {
-            if (template.Image.Width > searchFrame.Width
-                || template.Image.Height > searchFrame.Height)
+            var templateImage = GetTemplateForFrame(template, frame);
+            if (templateImage.Width > searchFrame.Width
+                || templateImage.Height > searchFrame.Height)
             {
                 continue;
             }
 
             var matches = BgraTemplateMatcher.FindMany(
                 searchFrame,
-                template.Image,
-                TemplateMatchOptions.MultiScale(effectiveThreshold));
+                templateImage,
+                TemplateMatchOptions.SingleScale(effectiveThreshold, _maximumResults));
             results.AddRange(matches.Select(match => new FeatureBox(
                 featureName,
                 match.X + bounds.X,
@@ -165,6 +168,47 @@ public sealed class TemplateFeatureMatcher : IFeatureMatcher, IRuntimeFeatureMat
             }
         }
     }
+    private BgraFrame GetTemplateForFrame(FeatureTemplate template, BgraFrame frame)
+    {
+        if (template.SourceImageWidth <= 0 || template.SourceImageHeight <= 0)
+        {
+            return template.Image;
+        }
+
+        if (frame.Width == template.SourceImageWidth
+            && frame.Height == template.SourceImageHeight)
+        {
+            return template.Image;
+        }
+
+        var scale = Math.Min(
+            frame.Width / (double)template.SourceImageWidth,
+            frame.Height / (double)template.SourceImageHeight);
+        if (scale <= 0)
+        {
+            return template.Image;
+        }
+
+        var width = Math.Max(1, (int)Math.Round(template.Image.Width * scale));
+        var height = Math.Max(1, (int)Math.Round(template.Image.Height * scale));
+        if (width == template.Image.Width && height == template.Image.Height)
+        {
+            return template.Image;
+        }
+
+        var key = new TemplateScaleKey(template, frame.Width, frame.Height);
+        lock (_templateScaleGate)
+        {
+            if (!_templateScaleCache.TryGetValue(key, out var cached))
+            {
+                cached = Resize(template.Image, width, height, InterpolationFlags.Linear);
+                _templateScaleCache[key] = cached;
+            }
+
+            return cached;
+        }
+    }
+
     private static bool ImagesEqual(BgraFrame first, BgraFrame second)
         => first.Width == second.Width
            && first.Height == second.Height
@@ -194,7 +238,11 @@ public sealed class TemplateFeatureMatcher : IFeatureMatcher, IRuntimeFeatureMat
         return new PixelBounds(left, top, right - left, bottom - top);
     }
 
-    private static BgraFrame Resize(BgraFrame source, int width, int height)
+    private static BgraFrame Resize(
+        BgraFrame source,
+        int width,
+        int height,
+        InterpolationFlags? interpolation = null)
     {
         if (source.Width == width && source.Height == height)
         {
@@ -210,9 +258,10 @@ public sealed class TemplateFeatureMatcher : IFeatureMatcher, IRuntimeFeatureMat
             new Size(width, height),
             0,
             0,
-            width < source.Width || height < source.Height
+            interpolation
+            ?? (width < source.Width || height < source.Height
                 ? InterpolationFlags.Area
-                : InterpolationFlags.Linear);
+                : InterpolationFlags.Linear));
 
         var pixels = new byte[width * height * 4];
         if (resized.IsContinuous())
@@ -253,6 +302,11 @@ public sealed class TemplateFeatureMatcher : IFeatureMatcher, IRuntimeFeatureMat
         var bottom = Math.Clamp((int)Math.Ceiling(region.Bottom * frame.Height), 0, frame.Height);
         return new PixelBounds(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
     }
+
+    private readonly record struct TemplateScaleKey(
+        FeatureTemplate Template,
+        int FrameWidth,
+        int FrameHeight);
 
     private sealed record PixelBounds(int X, int Y, int Width, int Height);
 }

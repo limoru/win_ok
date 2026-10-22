@@ -83,7 +83,7 @@ public sealed class ChaosEquipmentCatalog
     public int? FindSlot(string? ocrName)
     {
         var normalizedOcrName = Normalize(ocrName);
-        if (normalizedOcrName.Length == 0)
+        if (normalizedOcrName.Length < 2)
         {
             return null;
         }

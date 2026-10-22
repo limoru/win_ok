@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017130202874",
+  "consumerId": "confirm",
+  "frameSequence": 80,
+  "capturedAt": "2026-10-17T13:03:07.2087079+08:00",
+  "archivedAt": "2026-10-17T13:03:07.6633258+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "B0BDF03D56B7001A1AADC0E63DCFBBC42C3AFF8C6BED19DA9174A00B1EF449C8-20261017-130307208-WIN-01-80.png",
+  "imageSha256": "B0BDF03D56B7001A1AADC0E63DCFBBC42C3AFF8C6BED19DA9174A00B1EF449C8",
+  "textSignature": "F25C69E9A08D3E32B3850148EF22F5CB37B1551D2FFAE6A7CD9E88FDB2870E24",
+  "ocr": {
+    "text": "MA\r\n\u62FF\u53D6\r\n\u83B7\u5F971\u5F20\u5492\u672F\u5361\u724C\u8D2B\u8840\u3002\r\n\u83B7\u5F971\u4EF6\u968F\u673A\u4F20\u8BF4\u88C5\u5907\u3002\r\n\u8BF7\u9009\u8EAB\r\n\u8FD0\u3002\r\n\u786E\u8BA4",
+    "score": 0.9513597127163049,
+    "lines": [
+      {
+        "text": "MA",
+        "score": 0.5725416243076324,
+        "x": 448,
+        "y": 269,
+        "width": 41,
+        "height": 46
+      },
+      {
+        "text": "\u62FF\u53D6",
+        "score": 0.9999749660491943,
+        "x": 378,
+        "y": 474,
+        "width": 59,
+        "height": 38
+      },
+      {
+        "text": "\u83B7\u5F971\u5F20\u5492\u672F\u5361\u724C\u8D2B\u8840\u3002",
+        "score": 0.9997291131453081,
+        "x": 298,
+        "y": 524,
+        "width": 209,
+        "height": 32
+      },
+      {
+        "text": "\u83B7\u5F971\u4EF6\u968F\u673A\u4F20\u8BF4\u88C5\u5907\u3002",
+        "score": 0.9993014389818365,
+        "x": 296,
+        "y": 552,
+        "width": 211,
+        "height": 35
+      },
+      {
+        "text": "\u8BF7\u9009\u8EAB",
+        "score": 0.8001182476679484,
+        "x": 670,
+        "y": 817,
+        "width": 82,
+        "height": 40
+      },
+      {
+        "text": "\u8FD0\u3002",
+        "score": 0.9310939908027649,
+        "x": 863,
+        "y": 824,
+        "width": 42,
+        "height": 30
+      },
+      {
+        "text": "\u786E\u8BA4",
+        "score": 0.9989792704582214,
+        "x": 1435,
+        "y": 818,
+        "width": 68,
+        "height": 39
+      }
+    ]
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017131756314",
+  "consumerId": "target-member-archive",
+  "frameSequence": 16,
+  "capturedAt": "2026-10-17T13:18:08.6244586+08:00",
+  "archivedAt": "2026-10-17T13:18:09.7688682+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "5481BB9F1BA119BB44DCE68706AB5A58C653EFEC19319EA97B8407C9F21AC748-20261017-131808624-WIN-01-16.png",
+  "imageSha256": "5481BB9F1BA119BB44DCE68706AB5A58C653EFEC19319EA97B8407C9F21AC748",
+  "textSignature": "0FD1CE536A7F6DE7236249DFE267940CF4FFD3F5A652B56EEA16137F3683742B",
+  "ocr": {
+    "text": "o00\r\n2486/2486\r\n\u25A1\r\n000\r\n\u00AE\r\n100\r\n\u65E5\r\n\u4E09",
+    "score": 0.7655877804552967,
+    "lines": [
+      {
+        "text": "o00",
+        "score": 0.3445833722750346,
+        "x": 23,
+        "y": 45,
+        "width": 165,
+        "height": 55
+      },
+      {
+        "text": "2486/2486",
+        "score": 0.9928737812572055,
+        "x": 248,
+        "y": 21,
+        "width": 168,
+        "height": 28
+      },
+      {
+        "text": "\u25A1",
+        "score": 0.22558929026126862,
+        "x": 325,
+        "y": 67,
+        "width": 56,
+        "height": 25
+      },
+      {
+        "text": "000",
+        "score": 0.7446358998616537,
+        "x": 423,
+        "y": 50,
+        "width": 165,
+        "height": 46
+      },
+      {
+        "text": "\u00AE",
+        "score": 0.051498893648386,
+        "x": 1062,
+        "y": 25,
+        "width": 50,
+        "height": 51
+      },
+      {
+        "text": "100",
+        "score": 0.9981020092964172,
+        "x": 1142,
+        "y": 28,
+        "width": 53,
+        "height": 35
+      },
+      {
+        "text": "\u65E5",
+        "score": 0.37417417764663696,
+        "x": 1381,
+        "y": 34,
+        "width": 38,
+        "height": 27
+      },
+      {
+        "text": "\u4E09",
+        "score": 0.9938409328460693,
+        "x": 1507,
+        "y": 25,
+        "width": 41,
+        "height": 37
+      }
+    ]
+  }
+}

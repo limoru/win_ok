@@ -143,7 +143,8 @@ public sealed class ChaosModeSettingsViewModel : TaskConfigEditorViewModel
             .Where(group => group.DisplayName != ChaosModeConfigSchema.SeasonSelectorGroupName
                             && group.DisplayName != ChaosModeConfigSchema.EquipmentGroupName
                             && group.DisplayName != ChaosModeConfigSchema.EngravingGroupName
-                            && group.DisplayName != ChaosModeConfigSchema.BrokenLightAndClawGroupName)
+                            && group.DisplayName != ChaosModeConfigSchema.BrokenLightAndClawGroupName
+                            && group.DisplayName != ChaosModeConfigSchema.SnowboundPromiseGroupName)
             .ToArray();
         _contextGroupsBySeasonValue = new Dictionary<string, TaskConfigGroupViewModel>(StringComparer.Ordinal)
         {
@@ -152,7 +153,9 @@ public sealed class ChaosModeSettingsViewModel : TaskConfigEditorViewModel
             [ChaosModeConfigSchema.SongInGalaxySeason] = Groups.Single(
                 group => group.DisplayName == ChaosModeConfigSchema.EngravingGroupName),
             [ChaosModeConfigSchema.BrokenLightAndClawSeason] = Groups.Single(
-                group => group.DisplayName == ChaosModeConfigSchema.BrokenLightAndClawGroupName)
+                group => group.DisplayName == ChaosModeConfigSchema.BrokenLightAndClawGroupName),
+            [ChaosModeConfigSchema.SnowboundPromiseSeason] = Groups.Single(
+                group => group.DisplayName == ChaosModeConfigSchema.SnowboundPromiseGroupName)
         };
 
         SeasonSelector.PropertyChanged += (_, args) =>

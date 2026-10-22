@@ -22,25 +22,25 @@
 |---:|---|---|---|---|
 | 1 | `handle_auto_stop` | `HandleAutoStopAsync` | 待迁移 | 依赖 `几轮后停止(0为不停止)` 和 `total_rounds`。 |
 | 2 | `handle_save_target_member` | `HandleSaveTargetMemberAsync` | 正常流程实现 | 已接入主界面血量识别、进入信息统计页和单局存档主战员特征准备。 |
-| 3 | `handle_route_selection` | `HandleRouteSelectionActionAsync` | 正常流程实现 | 已接入节点识别、小地图规划、可见节点兜底和路线优先级；刻印专业模式与 Boss 前运行时暂停暂缓。 |
+| 3 | `handle_route_selection` | `HandleRouteSelectionActionAsync` | 正常流程实现 | 已接入节点识别、小地图规划、可见节点兜底和路线优先级；刻印专业模式暂缓。 |
 | 4 | `log_credit` | `LogCredit` | 待迁移 | 仅记录信用点，不拦截后续 handler。 |
 | 5 | `log_node_status` | `LogNodeStatus` | 待迁移 | 需要统一的进度状态输出。 |
 | 6 | `handle_stuck_log` | `HandleStuckLogAsync` | 待迁移 | 依赖帧变化检测和多种兜底 handler。 |
-| 7 | `handle_close_page` | `HandleClosePageAsync` | 已完成 | |
+| 7 | `handle_close_page` | `HandleClosePageAsync` | 已完成 | 正式 `close-page` 帧路由；统一动作边界，按配置轮数有界重试，最多 3 次。 |
 | 8 | `handle_refine_equipment_credit` | `HandleRefineEquipmentCreditAsync` | 已完成 | |
 | 9 | `handle_center_confirm` | `HandleCenterConfirmAsync` | 已完成 | |
-| 10 | `handle_archive_target_member` | `HandleArchiveTargetMemberAsync` | 正常流程实现 | 每次仍进入信息统计页校验主战员槽位；先以任务方案中的多个 `target_member` 头像候选匹配，命中后直接退出，未命中才按 OCR 名称查找并追加新头像模板。复制、选卡、装备、面具和大图整组头像特征都随任务方案持久化，每个特征最多保留 5 个候选，可直接随方案导出复用。 |
+| 10 | `handle_archive_target_member` | `HandleArchiveTargetMemberAsync` | 正常流程实现 | 启动时加载任务方案中的头像变体；存在基础头像时直接跳过主界面信息统计页确认。只有方案没有头像或缓存无法匹配时，才进入信息统计页并按 OCR 名称追加新变体。一个变体按复制、选卡、装备、面具和大图六个特征整组保存，每个方案最多保留 5 个不重复头像；方案设置页以紧凑缩略图展示、批量导入和删除，头像随方案导出复用。 |
 | 11 | `handle_chaos_mask_engraving` | `HandleChaosMaskEngravingAsync` | 待迁移 | 依赖面具卡牌刻印配置和 OCR。 |
-| 12 | `handle_equipment` | `HandleEquipmentAsync` | 正常流程实现 | 已接入普通装备价格、词典槽位、目标主战员、优先级和品质比较；刷装备刻印与刻印优先级暂缓。 |
+| 12 | `handle_equipment` | `HandleEquipmentAsync` | 正常流程实现 | 已接入普通装备价格、词典槽位、目标主战员、优先级和品质比较；Boss 装备领取后直接复用同一套候选选择、成员分配和确认流程；刷装备刻印与刻印优先级暂缓。 |
 | 13 | `handle_card_assign` | `HandleCardAssignAsync` | 正常流程实现 | 已接入普通卡牌奖励分配、购买页取消/购买和目标主战员选择；滚动、复杂刷新和赛季分支暂缓。 |
-| 14 | `handle_confirm` | `HandleConfirmAsync` | 已完成 | |
+| 14 | `handle_confirm` | `HandleConfirmAsync` | 已完成 | 页脚确认走统一动作边界；按配置轮数有界重试，最多 3 次。 |
 | 15 | `handle_mask_card` | `HandleMaskCardAsync` | 待迁移 | 依赖指定面具和刷新次数。 |
 | 16 | `handle_convert` | `HandleConvertAsync` | 已完成 | |
 | 17 | `handle_shop` | `HandleShopAsync` | 正常流程实现 | 已接入普通商品选择、免费刷新、删牌入口和 3 张中立牌限制；付费刷新、刻印角标与专业模式暂缓。 |
 | 18 | `handle_rest` | `HandleRestAsync` | 正常流程实现 | 已接入普通休息、冥想条件判断、血量取舍和德朗商店入口。 |
 | 19 | `handle_close_button` | `HandleCloseButtonAsync` | 已完成 | |
 | 20 | `handle_remove` | `HandleRemoveAsync` | 正常流程实现 | 已接入移除按钮状态判断，并区分商店删牌与本局总删牌计数。 |
-| 21 | `handle_three_choice_card_remove` | `HandleThreeChoiceCardRemoveAsync` | 待迁移 | 依赖三选一删牌逻辑。 |
+| 21 | `handle_three_choice_card_remove` | `HandleThreeChoiceCardRemoveAsync` | 已完成 | 已接入删除按钮识别、激活判断、本地删牌计数和商店删牌统计。 |
 | 22 | `handle_flash` | `HandleFlashAsync` | 有意差异 | C# 改为精确匹配，避免遮住后两个闪光 handler。 |
 | 23 | `handle_reflash` | `HandleReflashAsync` | 已完成 | |
 | 24 | `handle_grant_flash` | `HandleGrantFlashAsync` | 已完成 | |
@@ -58,18 +58,18 @@
 | 36 | `handle_weakness_info` | `HandleWeaknessInfoAsync` | 已完成 | |
 | 37 | `handle_non_battle_page` | `HandleNonBattlePageAsync` | 已完成 | 已覆盖故事、营救、方舟城市停止请求和普通页面不误触。 |
 | 38 | `handle_battle_crash` | `HandleBattleCrashAsync` | 已完成 | 已覆盖三种错乱文案与未命中路径。 |
-| 39 | `handle_battle_auto_check` | `HandleBattleAutoCheckAsync` | 已完成 | 已覆盖手牌计数、start_attack_event 点击、自动战斗白色占比和最终 Boss 标记。 |
+| 39 | `handle_battle_auto_check` | `HandleBattleAutoCheckAsync` | 已完成 | 已覆盖手牌计数、start_attack_event 单次点击、自动战斗白色占比和最终 Boss 标记；跨帧开始战斗状态由 BattleEventFlow 管理。 |
 | 40 | `handle_settlement` | `HandleSettlementAsync` | 已完成 | |
 | 41 | `handle_destiny_choice` | `HandleDestinyChoiceAsync` | 正常流程实现 | 已接入命运标题识别和随机选择；确认继续交给后续处理器。 |
-| 42 | `handle_main_member_flash` | `HandleMainMemberFlashAsync` | 待迁移 | 依赖主战员闪光特征。 |
+| 42 | `handle_main_member_flash` | `HandleMainMemberFlashAsync` | 已完成 | 已接入主战员候选优先点击、确认特征检测和候选轮换。 |
 | 43 | `handle_card_reward` | `HandleCardRewardAsync` | 正常流程实现 | 已接入优先级选牌、刷新和跳过；target、刷初始卡牌和赛季分支暂缓。 |
 | 44 | `handle_select_card` | `HandleSelectCardAsync` | 正常流程实现 | 已接入当前可见卡组的优先级、咒术/基础牌兜底和跳过/取消；滚动浏览与刷空档同排选择暂缓。 |
 | 45 | `handle_copy_member` | `HandleCopyMemberAsync` | 正常流程实现 | 已按 `target_member_large` 头像优先点击目标主战员，未命中时按原顺序回退，并等待 `copymemberconfirm`。 |
 | 46 | `handle_convert_card` | `HandleConvertCardAsync` | 已完成 | |
 | 47 | `handle_discovery_select` | `HandleDiscoverySelectAsync` | 已完成 | 已覆盖配置阈值选择、无合格项取消和存储数据解析。 |
 | 48 | `handle_negotiation` | `HandleNegotiationAsync` | 有意差异 | 修正 Python 反向 `in` 判断，按意图判断包含“失败”。 |
-| 49 | `handle_chaos_reward_settlement` | `HandleChaosRewardSettlementAsync` | 待迁移 | 依赖奖励领取配置修改。 |
-| 50 | `handle_chaos_reward_claim` | `HandleChaosRewardClaimAsync` | 待迁移 | 依赖战利品验证卡和配置修改。 |
+| 49 | `handle_chaos_reward_settlement` | `HandleChaosRewardSettlementAsync` | 已完成 | 已接入领取奖励开关、结算页获得按钮和只打第一层结束分支。 |
+| 50 | `handle_chaos_reward_claim` | `HandleChaosRewardClaimAsync` | 已完成 | 已接入战利品验证卡解析、获得与取消分支。 |
 | 51 | `handle_continue` | `HandleContinueAsync` | 已完成 | |
 | 52 | `handle_season_chaos_initial_page` | `HandleSeasonChaosInitialPageAsync` | 待迁移 | 依赖存储数据阈值。 |
 | 53 | `handle_zero_system_initial_page` | `HandleZeroSystemInitialPageAsync` | 待迁移 | 依赖存储数据阈值。 |
@@ -86,9 +86,9 @@
 | 64 | `handle_memory_elimination` | `HandleMemoryEliminationAsync` | 已完成 | |
 | 65 | `handle_chaos_craft` | `HandleChaosCraftAsync` | 已完成 | |
 | 66 | `handle_conquer_difficulty` | `HandleConquerDifficultyAsync` | 已完成 | |
-| 67 | `handle_copy_card_choice` | `HandleCopyCardChoiceAsync` | 待迁移 | 依赖卡牌复制优先级。 |
+| 67 | `handle_copy_card_choice` | `HandleCopyCardChoiceAsync` | 已完成 | 已新增 `copy-card-choice` 路由（优先级 330，先于 `copy-member` 和通用 `skip`）；先匹配 `target` 特征，再按 `复制卡牌列表` 优先级选择。全部未命中时保持 Python 的 `false` 返回语义，允许后续处理器继续。 |
 | 68 | `handle_skip` | `HandleSkipAsync` | 已完成 | |
-| 69 | `handle_event_task` | `HandleEventTaskAsync` | 正常流程实现 | 已接入事件选项识别、禁用项过滤、check、必选/拉黑/任务优先级、战斗事件和随机兜底；宝库与刷初始分支暂缓。 |
+| 69 | `handle_event_task` | `HandleEventTaskAsync` | 正常流程实现 | 已接入事件选项识别、禁用项过滤、check、必选/拉黑/任务优先级、战斗事件和随机兜底；战斗事件选中后的残留事件帧由 BattleEventFlow 隔离；宝库与刷初始分支暂缓。 |
 | 70 | `handle_held_cards_page` | `HandleHeldCardsPageAsync` | 已完成 | |
 | 71 | `handle_escape` | `HandleEscapeAsync` | 已完成 | |
 | 72 | `handle_stage_end_data_details` | `HandleStageEndDataDetailsAsync` | 已完成 | |
@@ -96,10 +96,10 @@
 ## 当前统计
 
 - 总入口：72
-- 已完成：43
-- 正常流程实现：10
+- 已完成：44
+- 正常流程实现：14
 - 有意差异：2
-- 待迁移：18
+- 待迁移：12
 
 ## 迁移阶段约束
 

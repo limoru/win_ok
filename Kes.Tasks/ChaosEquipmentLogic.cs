@@ -93,7 +93,8 @@ public static class ChaosEquipmentLogic
     public static ChaosEquipmentInstallDecision DecideInstall(
         string? currentName,
         string? currentQuality,
-        ChaosEquipmentCandidate candidate)
+        ChaosEquipmentCandidate candidate,
+        IReadOnlyList<string>? otherSlotQualities = null)
     {
         ArgumentNullException.ThrowIfNull(candidate);
         var currentRank = MatchEquipmentName(currentName, candidate.Priority).Rank;
@@ -113,9 +114,18 @@ public static class ChaosEquipmentLogic
         var currentQualityRank = QualityRanks.GetValueOrDefault(currentQuality ?? string.Empty);
         var newQualityRank = QualityRanks.GetValueOrDefault(candidate.Quality ?? string.Empty);
         var currentLabel = string.IsNullOrEmpty(currentQuality) ? "未安装" : currentQuality;
-        return new ChaosEquipmentInstallDecision(
+        var qualityDecision = new ChaosEquipmentInstallDecision(
             newQualityRank > currentQualityRank,
             $"品质{candidate.Quality}高于{currentLabel}");
+        if (qualityDecision.ShouldInstall
+            && string.Equals(candidate.Quality, "传说", StringComparison.Ordinal)
+            && otherSlotQualities?.Any(quality =>
+                string.Equals(quality, "传说", StringComparison.Ordinal)) == true)
+        {
+            return new ChaosEquipmentInstallDecision(false, "该主战员其他装备位已有传说装备");
+        }
+
+        return qualityDecision;
     }
 
     public static string QualityAt(BgraFrame frame, double relativeX, double relativeY, bool allowEmpty = false)

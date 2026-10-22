@@ -6,7 +6,11 @@ using OpenCvSharp;
 
 namespace Automation.Vision.Onnx;
 
-public sealed record FeatureTemplate(string FeatureName, BgraFrame Image);
+public sealed record FeatureTemplate(
+    string FeatureName,
+    BgraFrame Image,
+    int SourceImageWidth = 0,
+    int SourceImageHeight = 0);
 
 /// <summary>
 /// 从 Python 版使用的 coco_annotations.json 和 images 目录构建模板集合。
@@ -89,7 +93,9 @@ public sealed class FeatureTemplateCatalog
 
                 categoryTemplates.Add(new FeatureTemplate(
                     category.Name,
-                    CropAnnotation(source, annotation.Bbox, category.Name)));
+                    CropAnnotation(source, annotation.Bbox, category.Name),
+                    source.Width,
+                    source.Height));
             }
 
             templates[category.Name] = categoryTemplates;

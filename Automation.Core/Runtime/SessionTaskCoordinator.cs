@@ -1,6 +1,6 @@
 namespace Automation.Core.Runtime;
 
-public sealed class SessionTaskCoordinator : IDisposable
+public sealed class SessionTaskCoordinator : IDisposable, IAsyncDisposable
 {
     private const int WaitingReportThreshold = 5;
     private readonly object _gate = new();
@@ -109,8 +109,11 @@ public sealed class SessionTaskCoordinator : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             await WaitWhilePausedAsync(cancellationToken).ConfigureAwait(false);
-            await RunOnceAsync(cancellationToken).ConfigureAwait(false);
-            await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
+            var handled = await RunOnceAsync(cancellationToken).ConfigureAwait(false);
+            if (!handled)
+            {
+                await Task.Delay(_pollInterval, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -204,7 +207,7 @@ public sealed class SessionTaskCoordinator : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         TaskCompletionSource<bool>? resumeCompletion;
         lock (_gate)
@@ -221,6 +224,13 @@ public sealed class SessionTaskCoordinator : IDisposable
         }
 
         resumeCompletion?.TrySetResult(true);
+        foreach (var module in _modules)
+        {
+            await module.DisposeAsync().ConfigureAwait(false);
+        }
+
         _runGate.Dispose();
     }
+
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 }

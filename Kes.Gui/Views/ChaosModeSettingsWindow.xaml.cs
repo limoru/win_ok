@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using System.Windows;
 using Kes.Gui.ViewModels.Tasks;
 using Kes.Tasks.Configuration;
@@ -22,4 +23,24 @@ public partial class ChaosModeSettingsWindow : Window
 
     private void CloseButton_Click(object sender, RoutedEventArgs e)
         => Close();
+
+    private void AddAvatarButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ChaosModeSettingsWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "选择干员头像",
+            Filter = "图片文件|*.png;*.jpg;*.jpeg;*.bmp|所有文件|*.*",
+            Multiselect = true,
+            CheckFileExists = true
+        };
+        if (dialog.ShowDialog(this) == true)
+        {
+            viewModel.AddAvatarFiles(dialog.FileNames);
+        }
+    }
 }

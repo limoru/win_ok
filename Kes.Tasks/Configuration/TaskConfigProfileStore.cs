@@ -7,7 +7,7 @@ namespace Kes.Tasks.Configuration;
 
 public sealed class TaskConfigProfileStore
 {
-    private const int MaxRuntimeTemplatesPerFeature = 5;
+    public const int MaxRuntimeTemplatesPerFeature = 5;
     private readonly string _filePath;
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -168,6 +168,98 @@ public sealed class TaskConfigProfileStore
 
         profile.UpdatedAt = DateTimeOffset.Now;
         Persist();
+    }
+
+    /// <summary>
+    /// Persists a group of feature templates as one avatar variant. If any image in
+    /// the group already exists, the whole group is treated as a duplicate so the
+    /// per-feature lists cannot drift out of alignment.
+    /// </summary>
+    public bool SaveRuntimeTemplateBundle(
+        string profileId,
+        IReadOnlyDictionary<string, RuntimeFeatureTemplate> templates)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(profileId);
+        ArgumentNullException.ThrowIfNull(templates);
+        if (templates.Count == 0)
+        {
+            return false;
+        }
+
+        var profile = Profiles.FirstOrDefault(item => item.Id == profileId)
+            ?? throw new InvalidOperationException("Profile not found: " + profileId);
+        var updates = new Dictionary<string, List<RuntimeFeatureTemplate>>(StringComparer.Ordinal);
+        foreach (var (key, template) in templates)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(key);
+            ArgumentNullException.ThrowIfNull(template);
+            var clone = CloneRuntimeTemplate(template);
+            profile.RuntimeTemplates.TryGetValue(key, out var existing);
+            if (existing?.Any(item => TemplatesEqual(item, clone)) == true)
+            {
+                return false;
+            }
+
+            var updated = existing is null
+                ? []
+                : existing.Select(CloneRuntimeTemplate).ToList();
+            updated.Add(clone);
+            if (updated.Count > MaxRuntimeTemplatesPerFeature)
+            {
+                updated.RemoveRange(0, updated.Count - MaxRuntimeTemplatesPerFeature);
+            }
+
+            updates[key] = updated;
+        }
+
+        foreach (var (key, templatesForFeature) in updates)
+        {
+            profile.RuntimeTemplates[key] = templatesForFeature;
+        }
+
+        profile.UpdatedAt = DateTimeOffset.Now;
+        Persist();
+        return true;
+    }
+
+    public bool RemoveRuntimeTemplateAt(
+        string profileId,
+        IEnumerable<string> keys,
+        int index)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(profileId);
+        ArgumentNullException.ThrowIfNull(keys);
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+
+        var profile = Profiles.FirstOrDefault(item => item.Id == profileId)
+            ?? throw new InvalidOperationException("Profile not found: " + profileId);
+        var changed = false;
+        foreach (var key in keys
+                     .Where(key => !string.IsNullOrWhiteSpace(key))
+                     .Distinct(StringComparer.Ordinal))
+        {
+            if (!profile.RuntimeTemplates.TryGetValue(key, out var templates)
+                || index >= templates.Count)
+            {
+                continue;
+            }
+
+            templates.RemoveAt(index);
+            changed = true;
+            if (templates.Count == 0)
+            {
+                profile.RuntimeTemplates.Remove(key);
+            }
+        }
+
+        if (!changed)
+        {
+            return false;
+        }
+
+        profile.UpdatedAt = DateTimeOffset.Now;
+        Persist();
+        return true;
     }
 
     public void ClearRuntimeTemplates(string profileId)

@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017130202874",
+  "consumerId": "no-consumer",
+  "frameSequence": 65,
+  "capturedAt": "2026-10-17T13:02:55.0956478+08:00",
+  "archivedAt": "2026-10-17T13:02:55.7031019+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "2E42F62FDD27F7911212D5B996F8A80CD3E650D6BC0DF0540312C6E08ED06E63-20261017-130255095-WIN-01-65.png",
+  "imageSha256": "2E42F62FDD27F7911212D5B996F8A80CD3E650D6BC0DF0540312C6E08ED06E63",
+  "textSignature": "5685EE386745FF71BCEBB3F29A11BB997366BFDB83B34850161BD90816B7C36A",
+  "ocr": {
+    "text": "2486/2486\r\ne\r\n100\r\neoe\r\n-\r\n\u25A1\r\n\u671F\r\nCC\r\n\u7728\u773C\u7684\u5DE5\u592B\uFF0C\u4F20\u4EE4\u5175\u5C31\u6D88",
+    "score": 0.7895229500718415,
+    "lines": [
+      {
+        "text": "2486/2486",
+        "score": 0.9749628636572096,
+        "x": 254,
+        "y": 21,
+        "width": 170,
+        "height": 28
+      },
+      {
+        "text": "e",
+        "score": 0.11691104620695114,
+        "x": 1080,
+        "y": 33,
+        "width": 26,
+        "height": 25
+      },
+      {
+        "text": "100",
+        "score": 0.9943726460138956,
+        "x": 1146,
+        "y": 31,
+        "width": 54,
+        "height": 29
+      },
+      {
+        "text": "eoe",
+        "score": 0.35855286320050556,
+        "x": 61,
+        "y": 57,
+        "width": 135,
+        "height": 35
+      },
+      {
+        "text": "-",
+        "score": 0.06455264985561371,
+        "x": 295,
+        "y": 67,
+        "width": 33,
+        "height": 20
+      },
+      {
+        "text": "\u25A1",
+        "score": 0.2732890844345093,
+        "x": 338,
+        "y": 65,
+        "width": 50,
+        "height": 28
+      },
+      {
+        "text": "\u671F",
+        "score": 0.11605340987443924,
+        "x": 437,
+        "y": 51,
+        "width": 83,
+        "height": 41
+      },
+      {
+        "text": "CC",
+        "score": 0.4408095180988312,
+        "x": 555,
+        "y": 70,
+        "width": 33,
+        "height": 14
+      },
+      {
+        "text": "\u7728\u773C\u7684\u5DE5\u592B\uFF0C\u4F20\u4EE4\u5175\u5C31\u6D88",
+        "score": 0.9980788068337874,
+        "x": 567,
+        "y": 732,
+        "width": 353,
+        "height": 40
+      }
+    ]
+  }
+}

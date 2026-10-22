@@ -46,6 +46,15 @@ public interface IRuntimeFeatureTemplateStore
     IReadOnlyList<RuntimeFeatureTemplate> Load(string featureName);
 
     void Save(RuntimeFeatureTemplate template);
+
+    void SaveBundle(IReadOnlyDictionary<string, RuntimeFeatureTemplate> templates)
+    {
+        ArgumentNullException.ThrowIfNull(templates);
+        foreach (var template in templates.Values)
+        {
+            Save(template);
+        }
+    }
 }
 
 public interface IFeatureMatcher

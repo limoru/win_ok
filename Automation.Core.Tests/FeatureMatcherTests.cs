@@ -32,7 +32,29 @@ public sealed class FeatureMatcherTests
         Assert.InRange(match.Height, 9, 11);
         Assert.True(match.Confidence >= 0.95);
     }
+    [Fact]
+    public void TemplateMatcherScalesTemplateToFrameResolution()
+    {
+        var source = CreateSolidFrame(160, 100, 10, 10, 10, 255);
+        var pattern = CreatePatternFrame(24, 12);
+        DrawPattern(source, pattern, 48, 32);
+        var template = source.Crop(48, 32, 24, 12);
+        var resizedSource = ResizeFrame(source, 80, 50);
+        var catalog = FeatureTemplateCatalog.FromTemplates(
+            [new FeatureTemplate("position", template, source.Width, source.Height)]);
+        var matcher = new TemplateFeatureMatcher(catalog, defaultThreshold: 0.80);
 
+        var results = matcher.Find(
+            resizedSource,
+            "position",
+            new FeatureSearchRegion(0.1, 0.1, 0.9, 0.9));
+
+        var match = Assert.Single(results);
+        Assert.InRange(match.X, 23, 25);
+        Assert.InRange(match.Y, 15, 17);
+        Assert.InRange(match.Width, 11, 13);
+        Assert.InRange(match.Height, 5, 7);
+    }
     [Fact]
     public void RuntimeTemplateCanBeRegisteredAndMatched()
     {
@@ -171,6 +193,17 @@ public sealed class FeatureMatcherTests
                 targetOffset,
                 pattern.Stride);
         }
+    }
+
+    private static BgraFrame ResizeFrame(BgraFrame source, int width, int height)
+    {
+        using var sourceMat = new Mat(source.Height, source.Width, MatType.CV_8UC4);
+        Marshal.Copy(source.Pixels, 0, sourceMat.Data, source.Pixels.Length);
+        using var resized = new Mat();
+        Cv2.Resize(sourceMat, resized, new Size(width, height), 0, 0, InterpolationFlags.Area);
+        var pixels = new byte[checked(width * height * 4)];
+        Marshal.Copy(resized.Data, pixels, 0, pixels.Length);
+        return new BgraFrame(width, height, pixels);
     }
 
     private static void WritePng(string path, BgraFrame frame)

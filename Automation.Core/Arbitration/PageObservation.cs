@@ -78,6 +78,9 @@ public sealed record PageObservation(
     RelativePoint? CenterConfirmationPoint = null,
     DateTimeOffset CapturedAt = default)
 {
+    public IReadOnlyList<string> RouteIds { get; init; } = Array.Empty<string>();
+    public string? PrimaryRouteId => RouteIds.FirstOrDefault();
+
     public static PageObservation FromOcr(
         string sessionId,
         long frameSequence,

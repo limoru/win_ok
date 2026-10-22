@@ -4,27 +4,18 @@ public enum PageActionObservationKind
 {
     SourcePageStillPresent,
     ConfirmationObserved,
-    RetryAvailable,
     Completed
 }
 
 public sealed class PageActionSession
 {
-    private static readonly TimeSpan DefaultRetryAfter = TimeSpan.FromSeconds(5);
-    private const int MaxAttempts = 2;
-
     private readonly string _sessionId;
-    private readonly DateTimeOffset _startedAt;
-    private readonly TimeSpan _retryAfter;
-    private DateTimeOffset _lastAttemptAt;
-    private bool _confirmationObserved;
-    private bool _retryAvailable;
 
     public PageActionSession(
         string sessionId,
         string actionKey,
         PageObservation observation,
-        TimeSpan? retryAfter = null)
+        string? sourceRouteId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         ArgumentException.ThrowIfNullOrWhiteSpace(actionKey);
@@ -32,15 +23,19 @@ public sealed class PageActionSession
 
         _sessionId = sessionId;
         ActionKey = actionKey;
+        SourceRouteId = string.IsNullOrWhiteSpace(sourceRouteId)
+            ? observation.PrimaryRouteId ?? actionKey
+            : sourceRouteId;
         SourceFingerprint = observation.Fingerprint;
-        _startedAt = ResolveTimestamp(observation);
-        _lastAttemptAt = _startedAt;
-        _retryAfter = retryAfter ?? DefaultRetryAfter;
     }
 
     public string ActionKey { get; }
+    public string SourceRouteId { get; }
     public PageFingerprint SourceFingerprint { get; }
     public int AttemptCount { get; private set; }
+    public long LastCommandFrameSequence { get; private set; } = -1;
+    public int RecoveryCount { get; private set; }
+    public long LastRecoveryFrameSequence { get; private set; } = -1;
 
     public PageActionObservationKind Observe(
         PageObservation observation,
@@ -54,8 +49,6 @@ public sealed class PageActionSession
 
         if (observation.HasCenterConfirmation)
         {
-            _confirmationObserved = true;
-            _retryAvailable = false;
             return PageActionObservationKind.ConfirmationObserved;
         }
 
@@ -64,46 +57,64 @@ public sealed class PageActionSession
             return PageActionObservationKind.Completed;
         }
 
-        if (_retryAvailable)
-        {
-            return PageActionObservationKind.RetryAvailable;
-        }
-
-        if (!_confirmationObserved
-            && AttemptCount < MaxAttempts
-            && ResolveTimestamp(observation) - _lastAttemptAt >= _retryAfter)
-        {
-            _retryAvailable = true;
-            return PageActionObservationKind.RetryAvailable;
-        }
-
         return PageActionObservationKind.SourcePageStillPresent;
     }
 
-    public bool TryConsumeRetry(PageObservation observation)
+    public void MarkCommandSent(long frameSequence)
     {
-        ArgumentNullException.ThrowIfNull(observation);
-        if (!_retryAvailable || observation.HasCenterConfirmation)
-        {
-            return false;
-        }
-
-        _retryAvailable = false;
-        return true;
+        AttemptCount++;
+        LastCommandFrameSequence = Math.Max(LastCommandFrameSequence, frameSequence);
     }
 
-    public void MarkCommandSent(PageObservation observation)
+    public bool CanRetryAfter(long frameSequence, int retryAfterFrames, int maxAttempts)
     {
-        ArgumentNullException.ThrowIfNull(observation);
-        AttemptCount++;
-        _lastAttemptAt = ResolveTimestamp(observation);
-        _retryAvailable = false;
+        if (retryAfterFrames < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(retryAfterFrames));
+        }
+
+        if (maxAttempts < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxAttempts));
+        }
+
+        return AttemptCount > 0
+               && AttemptCount < maxAttempts
+               && LastCommandFrameSequence >= 0
+               && frameSequence >= LastCommandFrameSequence
+               && frameSequence - LastCommandFrameSequence >= retryAfterFrames;
+    }
+
+    public bool HasReachedAttemptLimit(int maxAttempts)
+    {
+        if (maxAttempts < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxAttempts));
+        }
+
+        return AttemptCount >= maxAttempts;
+    }
+
+    public bool CanRecoverAfter(long frameSequence, int recoveryAfterFrames)
+    {
+        if (recoveryAfterFrames < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(recoveryAfterFrames));
+        }
+
+        var anchorFrameSequence = Math.Max(
+            LastCommandFrameSequence,
+            LastRecoveryFrameSequence);
+        return LastCommandFrameSequence >= 0
+               && frameSequence >= anchorFrameSequence
+               && frameSequence - anchorFrameSequence >= recoveryAfterFrames;
+    }
+
+    public void MarkRecoveryDecision(long frameSequence)
+    {
+        RecoveryCount++;
+        LastRecoveryFrameSequence = Math.Max(LastRecoveryFrameSequence, frameSequence);
     }
 
     public bool CanCancelAfterUnhandledAttempt => AttemptCount == 0;
-
-    private static DateTimeOffset ResolveTimestamp(PageObservation observation)
-        => observation.CapturedAt == default
-            ? DateTimeOffset.UtcNow
-            : observation.CapturedAt;
 }

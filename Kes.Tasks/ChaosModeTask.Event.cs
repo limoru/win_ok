@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Automation.Core.Configuration;
 using Automation.Core.DeveloperTools;
 using Automation.Core.Targeting;
 using Automation.Core.Vision;
@@ -22,6 +23,28 @@ public sealed partial class ChaosModeTask
         if (bottom is not null && Regex.IsMatch(bottom.Text, @"\d+/\d+"))
         {
             return false;
+        }
+
+        var now = ResolveOperationTimestamp(page);
+        var battleEventDecision = page.State.BattleEvent.ObserveEventPage(now);
+        if (battleEventDecision == BattleEventPageDecision.WaitForTransition)
+        {
+            page.Context.LogDebug(
+                $"战斗事件流程处于 {page.State.BattleEvent.Phase}，忽略事件页残留帧，等待战斗页面。");
+            return true;
+        }
+
+        if (battleEventDecision == BattleEventPageDecision.RetryEventSelection)
+        {
+            page.Context.LogInfo("战斗事件切换超时，受控重试一次战斗事件选择。", "warning");
+            var retryAttackEvent = FindAttackEvent(page);
+            if (retryAttackEvent is not null)
+            {
+                await ClickFeatureAsync(page, retryAttackEvent, "重试点击战斗事件", cancellationToken)
+                    .ConfigureAwait(false);
+                page.State.BattleEvent.MarkEventSelected(now);
+                return true;
+            }
         }
 
         var reward = FindFeatureOne(page, "taskreward");
@@ -53,6 +76,21 @@ public sealed partial class ChaosModeTask
                 cancellationToken: cancellationToken)
             .ConfigureAwait(false);
 
+        var snowEvent = FindSnowSeasonPriorityEventOption(page, out var snowPhase);
+        if (snowEvent is not null)
+        {
+            page.State.SnowSeasonPhase = snowPhase;
+            page.State.SnowEventFallbackFingerprint = string.Empty;
+            ResetSnowMemoryAttempts(page.State);
+            var eventKey = ResolveSnowSeasonEventSelectionKey(snowEvent) ?? snowEvent.Description;
+            page.Context.LogInfo(
+                $"凝结于雪上的约定：优先选择赛季事件「{eventKey}」。",
+                "activity");
+            await ClickEventOptionAsync(page, snowEvent, cancellationToken).ConfigureAwait(false);
+            MarkSnowInput(page.State);
+            return true;
+        }
+
         var selectable = new List<EventOption>(options.Count);
         foreach (var option in options)
         {
@@ -78,13 +116,49 @@ public sealed partial class ChaosModeTask
             return false;
         }
 
+        var vaultEntry = selectable.FirstOrDefault(IsVaultEntryEventOption);
+        if (vaultEntry is not null)
+        {
+            var vaultEntryKey = BuildEventOptionKey(vaultEntry.Description);
+            var vaultEntryAttempts = string.Equals(
+                page.State.PendingEventOptionKey,
+                vaultEntryKey,
+                StringComparison.Ordinal)
+                ? page.State.PendingEventOptionAttempts + 1
+                : 1;
+            page.State.PendingEventOptionKey = vaultEntryKey;
+            page.State.PendingEventOptionAttempts = vaultEntryAttempts;
+
+            if (page.Context.UiProfile == UiProfile.WindowsPc)
+            {
+                page.Context.LogInfo(
+                    $"检测到宝库入口「{vaultEntry.Description}」，仅按 F1，不点击离开；后续事件逐帧独立判断。",
+                    "activity");
+                await PressKeyAsync(
+                        page,
+                        InputKey.F1,
+                        "执行宝库入口",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                page.Context.LogInfo(
+                    $"检测到宝库入口「{vaultEntry.Description}」，当前平台不支持 F1，回退为点击入口。",
+                    "warning");
+                await ClickEventOptionAsync(page, vaultEntry, cancellationToken).ConfigureAwait(false);
+            }
+
+            return true;
+        }
+
         var checkRegion = new RelativeRegion(0.396, 0.286, 0.960, 0.718);
         var check = new[] { "check", "check2" }
             .Select(name => FindFeatureOne(page, name, checkRegion))
             .Where(feature => feature is not null)
             .OrderByDescending(feature => feature!.Confidence)
             .FirstOrDefault();
-        if (check is not null)
+        if (check is not null && string.IsNullOrWhiteSpace(page.State.PendingEventOptionKey))
         {
             page.Context.LogInfo(
                 $"事件任务页面检测到check特征，相似度={check.Confidence:0.0000}，优先点击。",
@@ -103,9 +177,10 @@ public sealed partial class ChaosModeTask
                     StringComparison.Ordinal));
             if (pendingOption is not null)
             {
+
                 page.State.PendingEventOptionAttempts++;
                 page.Context.LogInfo(
-                    $"继续重试本轮已选事件选项（第{page.State.PendingEventOptionAttempts}次）: {pendingOption.Description}",
+                    $"事件选项页面未变化，执行第 {page.State.PendingEventOptionAttempts} 次补点：{pendingOption.Description}",
                     "activity");
                 await ClickEventOptionAsync(page, pendingOption, cancellationToken).ConfigureAwait(false);
                 return true;
@@ -177,9 +252,7 @@ public sealed partial class ChaosModeTask
 
         if (chosen is null)
         {
-            var attackEvent = FindFeatures(page, "attack_event", threshold: 0.95)
-                .OrderByDescending(feature => feature.Confidence)
-                .FirstOrDefault();
+            var attackEvent = FindAttackEvent(page);
             if (attackEvent is not null)
             {
                 page.Context.LogInfo(
@@ -187,6 +260,7 @@ public sealed partial class ChaosModeTask
                     "activity");
                 await ClickFeatureAsync(page, attackEvent, "点击战斗事件", cancellationToken)
                     .ConfigureAwait(false);
+                page.State.BattleEvent.MarkEventSelected(now);
                 return true;
             }
         }
@@ -205,11 +279,31 @@ public sealed partial class ChaosModeTask
         return true;
     }
 
+    private static FeatureBox? FindAttackEvent(ChaosModePage page)
+        => FindFeatures(page, "attack_event", threshold: 0.95)
+            .OrderByDescending(feature => feature.Confidence)
+            .FirstOrDefault();
+
+    private static DateTimeOffset ResolveOperationTimestamp(ChaosModePage page)
+        => page.Observation.CapturedAt == default
+            ? DateTimeOffset.UtcNow
+            : page.Observation.CapturedAt;
+
     private static IReadOnlyList<EventOption> RecognizeEventOptions(ChaosModePage page)
         => page.Classification.EventOptions;
 
     private static bool ContainsCjk(string value)
         => value.Any(character => character is >= '\u4e00' and <= '\u9fff');
+    private static bool IsVaultEntryEventOption(EventOption option)
+    {
+        var description = option.Description.Replace(" ", string.Empty, StringComparison.Ordinal);
+        var hasEnter = description.Contains("进入", StringComparison.Ordinal)
+                       || description.Contains("進入", StringComparison.Ordinal);
+        var hasVault = description.Contains("宝库", StringComparison.Ordinal)
+                       || description.Contains("寶庫", StringComparison.Ordinal);
+        return hasEnter && hasVault;
+    }
+
     private static EventOption? FindByPriority(
         IReadOnlyList<EventOption> options,
         IEnumerable<string> priorities)
@@ -233,6 +327,8 @@ public sealed partial class ChaosModeTask
         CancellationToken cancellationToken)
     {
         page.State.MainMemberFlashAttemptIndex = 0;
+        page.State.MainMemberFlashCandidateClickedAt = default;
+        page.State.MainMemberFlashConfirmClickedAt = default;
         return ClickPointAsync(
             page,
             option.ClickPoint,
@@ -287,12 +383,38 @@ public sealed partial class ChaosModeTask
         }
 
         page.Context.LogInfo("检测主战员闪光选择，进行相应操作", "activity");
-        var clickPositions = PrioritizeTargetMemberClicks(page);
+        var clickPositions = PrioritizeTargetMemberClicks(page, out var targetMatched);
+        var now = page.Observation.CapturedAt == default
+            ? DateTimeOffset.UtcNow
+            : page.Observation.CapturedAt;
+        var activeConfirm = FindActiveFooterConfirmBox(page);
+        if (activeConfirm is not null)
+        {
+            if (page.State.MainMemberFlashConfirmClickedAt != default
+                && now - page.State.MainMemberFlashConfirmClickedAt < OwnedFooterConfirmationRetryInterval)
+            {
+                page.Context.LogDebug("主战员闪光确认已下发，等待页面变化后再决定是否重试。");
+                return true;
+            }
+
+            page.State.MainMemberFlashAttemptIndex = 0;
+            page.State.MainMemberFlashCandidateClickedAt = default;
+            page.State.MainMemberFlashConfirmClickedAt = now;
+            await ClickFooterConfirmAsync(
+                    page,
+                    activeConfirm,
+                    "主战员闪光确认",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+
         var confirmRegion = new RelativeRegion(0.145, 0.044, 0.856, 0.214);
         if (page.State.MainMemberFlashAttemptIndex > 0
             && FindFeatureOne(page, "flashmemberconfirm", confirmRegion) is not null)
         {
             page.State.MainMemberFlashAttemptIndex = 0;
+            page.State.MainMemberFlashCandidateClickedAt = default;
             page.Context.LogInfo("已出现 flashmemberconfirm，等待后续确认处理。", "activity");
             return true;
         }
@@ -300,19 +422,36 @@ public sealed partial class ChaosModeTask
         if (clickPositions.Count == 0)
         {
             page.State.MainMemberFlashAttemptIndex = 0;
+            page.State.MainMemberFlashCandidateClickedAt = default;
             return true;
         }
 
         var attemptIndex = page.State.MainMemberFlashAttemptIndex;
+        if (attemptIndex > 0
+            && page.State.MainMemberFlashCandidateClickedAt != default
+            && now - page.State.MainMemberFlashCandidateClickedAt < OwnedFooterConfirmationRetryInterval)
+        {
+            page.Context.LogDebug("Main member flash selection dispatched; waiting for confirmation before trying another member.");
+            return true;
+        }
+
+        if (targetMatched && attemptIndex > 0)
+        {
+            attemptIndex = 0;
+            page.State.MainMemberFlashAttemptIndex = 0;
+        }
+
         if (attemptIndex < 0 || attemptIndex >= clickPositions.Count)
         {
             page.State.MainMemberFlashAttemptIndex = 0;
+            page.State.MainMemberFlashCandidateClickedAt = default;
             page.Context.LogInfo("所有主战员闪光位置均已尝试，等待页面变化。", "warning");
             return true;
         }
 
         var position = clickPositions[attemptIndex];
         page.State.MainMemberFlashAttemptIndex = attemptIndex + 1;
+        page.State.MainMemberFlashCandidateClickedAt = now;
         page.Context.LogInfo(
             $"点击位置 ({position.X:0.000}, {position.Y:0.000})",
             "activity");

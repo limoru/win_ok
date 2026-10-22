@@ -15,6 +15,8 @@ internal sealed class WindowsInputDispatcher : IInputSink
     private const uint MouseEventMove = 0x0001;
     private const uint MouseEventLeftDown = 0x0002;
     private const uint MouseEventLeftUp = 0x0004;
+    private const uint WmMouseWheel = 0x020A;
+    private const uint MouseEventWheel = 0x0800;
     private const uint KeyEventKeyUp = 0x0002;
     private const uint KeyEventUnicode = 0x0004;
     private const int SwRestore = 9;
@@ -65,39 +67,6 @@ internal sealed class WindowsInputDispatcher : IInputSink
         }
     }
 
-    public async ValueTask HoverClickAsync(
-        RelativePoint point,
-        CancellationToken cancellationToken = default)
-    {
-        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var windowHandle = ResolveWindowHandle();
-
-            if (ShouldUsePostMessage())
-            {
-                try
-                {
-                    await PostMessageHoverClickAsync(
-                            windowHandle,
-                            ToClientPoint(windowHandle, point),
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    return;
-                }
-                catch (Exception exception) when (CanFallbackToForeground(exception))
-                {
-                }
-            }
-
-            await ForegroundHoverClickAsync(windowHandle, point, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _operationGate.Release();
-        }
-    }
-
     public async ValueTask SwipeAsync(
         RelativePoint from,
         RelativePoint to,
@@ -138,6 +107,43 @@ internal sealed class WindowsInputDispatcher : IInputSink
                     duration,
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    public async ValueTask ScrollAsync(
+        RelativePoint point,
+        int wheelNotches,
+        CancellationToken cancellationToken = default)
+    {
+        if (wheelNotches == 0)
+        {
+            return;
+        }
+
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var windowHandle = ResolveWindowHandle();
+            var delta = wheelNotches * 120;
+            var screenPoint = ToScreenPoint(windowHandle, point);
+            if (ShouldUsePostMessage())
+            {
+                try
+                {
+                    var wParam = (long)((uint)(ushort)delta << 16);
+                    PostMessageOrThrow(windowHandle, WmMouseWheel, wParam, MakeLParam(screenPoint));
+                    return;
+                }
+                catch (Exception exception) when (CanFallbackToForeground(exception))
+                {
+                }
+            }
+
+            ForegroundScrollAsync(windowHandle, screenPoint, delta);
         }
         finally
         {
@@ -248,40 +254,19 @@ internal sealed class WindowsInputDispatcher : IInputSink
         return clientPoint;
     }
 
-    private static async Task PostMessageClickAsync(
+    private static Task PostMessageClickAsync(
         nint windowHandle,
         NativePoint point,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var lParam = MakeLParam(point);
         PostMessageOrThrow(windowHandle, WmMouseMove, 0, lParam);
-        await Task.Delay(25, cancellationToken).ConfigureAwait(false);
         PostMessageOrThrow(windowHandle, WmLButtonDown, 1, lParam);
-        try
-        {
-            // Keep the button held across several render frames. Some game UI
-            // implementations only observe a click when a move arrives while
-            // MK_LBUTTON is still set.
-            await Task.Delay(30, cancellationToken).ConfigureAwait(false);
-            PostMessageOrThrow(windowHandle, WmMouseMove, 1, lParam);
-            await Task.Delay(120, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            PostMessageOrThrow(windowHandle, WmLButtonUp, 0, lParam);
-            PostMessageOrThrow(windowHandle, WmMouseMove, 0, lParam);
-        }
-    }
-
-    private static async Task PostMessageHoverClickAsync(
-        nint windowHandle,
-        NativePoint point,
-        CancellationToken cancellationToken)
-    {
-        var lParam = MakeLParam(point);
+        PostMessageOrThrow(windowHandle, WmLButtonUp, 0, lParam);
         PostMessageOrThrow(windowHandle, WmMouseMove, 0, lParam);
-        await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-        await PostMessageClickAsync(windowHandle, point, cancellationToken).ConfigureAwait(false);
+
+        return Task.CompletedTask;
     }
 
     private static async Task PostMessageSwipeAsync(
@@ -344,35 +329,12 @@ internal sealed class WindowsInputDispatcher : IInputSink
         }
     }
 
-    private static async ValueTask ForegroundHoverClickAsync(
+    private static ValueTask ForegroundClickAsync(
         nint windowHandle,
         RelativePoint point,
         CancellationToken cancellationToken)
     {
-        EnsureTargetForeground(windowHandle);
-        var screenPoint = ToScreenPoint(windowHandle, point);
-        if (!SetCursorPos(screenPoint.X, screenPoint.Y))
-        {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "SetCursorPos failed.");
-        }
-
-        await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-        SendMouseInput(MouseEventLeftDown);
-        try
-        {
-            await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            SendMouseInput(MouseEventLeftUp);
-        }
-    }
-
-    private static async ValueTask ForegroundClickAsync(
-        nint windowHandle,
-        RelativePoint point,
-        CancellationToken cancellationToken)
-    {
+        cancellationToken.ThrowIfCancellationRequested();
         EnsureTargetForeground(windowHandle);
         var screenPoint = ToScreenPoint(windowHandle, point);
         if (!SetCursorPos(screenPoint.X, screenPoint.Y))
@@ -381,14 +343,9 @@ internal sealed class WindowsInputDispatcher : IInputSink
         }
 
         SendMouseInput(MouseEventLeftDown);
-        try
-        {
-            await Task.Delay(20, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            SendMouseInput(MouseEventLeftUp);
-        }
+        SendMouseInput(MouseEventLeftUp);
+
+        return ValueTask.CompletedTask;
     }
 
     private static async Task ForegroundSwipeAsync(
@@ -451,6 +408,20 @@ internal sealed class WindowsInputDispatcher : IInputSink
                 }
             }
         }
+    }
+
+    private static void ForegroundScrollAsync(
+        nint windowHandle,
+        NativePoint screenPoint,
+        int delta)
+    {
+        EnsureTargetForeground(windowHandle);
+        if (!SetCursorPos(screenPoint.X, screenPoint.Y))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "SetCursorPos failed.");
+        }
+
+        SendMouseWheel(delta);
     }
 
     private static void ForegroundSendKey(nint windowHandle, uint virtualKey)
@@ -545,6 +516,26 @@ internal sealed class WindowsInputDispatcher : IInputSink
         SendInputs(inputs);
     }
 
+    private static void SendMouseWheel(int delta)
+    {
+        var inputs = new[]
+        {
+            new Input
+            {
+                Type = 0,
+                Union = new InputUnion
+                {
+                    Mouse = new MouseInput
+                    {
+                        MouseData = unchecked((uint)delta),
+                        Flags = MouseEventWheel
+                    }
+                }
+            }
+        };
+        SendInputs(inputs);
+    }
+
     private static void SendKeyboardInput(uint virtualKey, uint flags)
     {
         var inputs = new[]
@@ -616,6 +607,7 @@ internal sealed class WindowsInputDispatcher : IInputSink
     private static uint ToVirtualKey(InputKey key)
         => key switch
         {
+            InputKey.F1 => 0x70,
             InputKey.Escape => 0x1B,
             InputKey.Enter => 0x0D,
             InputKey.Space => 0x20,

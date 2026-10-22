@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-3-20261017133933755",
+  "consumerId": "continue",
+  "frameSequence": 205,
+  "capturedAt": "2026-10-17T13:42:18.2691334+08:00",
+  "archivedAt": "2026-10-17T13:42:18.9199329+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "7D006D8F45A83C4C881654AE5EB304B2765F28D4973AAA249C2872A264E41B01-20261017-134218269-WIN-01-205.png",
+  "imageSha256": "7D006D8F45A83C4C881654AE5EB304B2765F28D4973AAA249C2872A264E41B01",
+  "textSignature": "B22AA10C5CA2BFC5FEAD8FAB05D3BB2D3EC9A7DC58CB26705EA24948459D622D",
+  "ocr": {
+    "text": "2535/2734\r\n156\r\n(D\r\n=\r\nO\r\n0\r\nAo0\r\n\u30EB7000\r\n\u65B0\r\n\u7EE7\u7EED",
+    "score": 0.7200173690382924,
+    "lines": [
+      {
+        "text": "2535/2734",
+        "score": 0.9624999033080207,
+        "x": 256,
+        "y": 21,
+        "width": 168,
+        "height": 28
+      },
+      {
+        "text": "156",
+        "score": 0.9989044666290283,
+        "x": 1146,
+        "y": 28,
+        "width": 56,
+        "height": 37
+      },
+      {
+        "text": "(D",
+        "score": 0.6092199683189392,
+        "x": 1385,
+        "y": 33,
+        "width": 47,
+        "height": 28
+      },
+      {
+        "text": "=",
+        "score": 0.4006507098674774,
+        "x": 1516,
+        "y": 29,
+        "width": 32,
+        "height": 30
+      },
+      {
+        "text": "O",
+        "score": 0.09209529310464859,
+        "x": 48,
+        "y": 61,
+        "width": 22,
+        "height": 19
+      },
+      {
+        "text": "0",
+        "score": 0.29240790009498596,
+        "x": 131,
+        "y": 64,
+        "width": 63,
+        "height": 29
+      },
+      {
+        "text": "Ao0",
+        "score": 0.29960820575555164,
+        "x": 237,
+        "y": 48,
+        "width": 151,
+        "height": 47
+      },
+      {
+        "text": "\u30EB7000",
+        "score": 0.5202366888523102,
+        "x": 431,
+        "y": 47,
+        "width": 165,
+        "height": 49
+      },
+      {
+        "text": "\u65B0",
+        "score": 0.9995772242546082,
+        "x": 85,
+        "y": 150,
+        "width": 27,
+        "height": 29
+      },
+      {
+        "text": "\u7EE7\u7EED",
+        "score": 0.9990473389625549,
+        "x": 1471,
+        "y": 802,
+        "width": 71,
+        "height": 42
+      }
+    ]
+  }
+}

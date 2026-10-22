@@ -133,7 +133,10 @@ public sealed class DecisionSnapshotTests
                 new OcrFrameResult(
                     "confirm",
                     0.99,
-                    [new OcrTextLine("确认", 0.99, new OcrTextRegion(700, 500, 120, 40))])),
+                    [
+                        new OcrTextLine("确认", 0.99, new OcrTextRegion(700, 500, 120, 40)),
+                        new OcrTextLine("取消", 0.99, new OcrTextRegion(900, 500, 120, 40))
+                    ])),
             decisionSnapshots: sink);
         var task = new ChaosModeTask();
 

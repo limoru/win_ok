@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using Automation.Core.Dispatching;
+using Automation.Core.Vision;
+using Kes.Tasks.Configuration;
 
 namespace Kes.Tasks;
 
@@ -7,6 +9,14 @@ public sealed partial class ChaosModeTask
 {
     private static FrameRoute<ChaosModePage>[] CreateFrameRoutes() =>
     [
+        Route(ClosePageConsumerId, 5,
+            page => FindTextAnywhere(page, GameText(page, "点击屏幕")) is not null,
+            HandleClosePageAsync,
+            allowFallbackWhenUnhandled: false,
+            actionRetryAfterFrames: GetActionRetryAfterFrames,
+            isPriorityOverlay: true),
+        Route("snow-season", 8, IsSnowSeasonPage, HandleSnowSeasonAsync,
+            actionRetryAfterFrames: GetActionRetryAfterFrames),
         Route("route-selection", 10, IsRouteSelectionPage, HandleRouteSelectionActionAsync),
         Route("refine-equipment-credit", 20,
             page => HasContainedTextAtPoint(page, 0.598, 0.635, "以信用点接收"),
@@ -16,16 +26,22 @@ public sealed partial class ChaosModeTask
                 line.Text.Contains("不使用战利品验证卡", StringComparison.Ordinal)
                 || line.Text.Contains("不使用戰利品驗證卡", StringComparison.Ordinal)),
             HandleValidationCardPromptAsync),
-        Route("event-task", 40, IsEventTaskPage, HandleEventTaskAsync),
+        Route("event-task", 40, IsEventTaskPage, HandleEventTaskAsync,
+            actionRetryAfterFrames: GetActionRetryAfterFrames),
         Route("shared-confirmation", 50,
             page => FindCenterConfirmation(page) is not null,
             HandleSharedConfirmationAsync,
             useActionBoundary: false),
         Route("confirm", 56, ShouldHandleConfirmButton, HandleConfirmAsync,
-            allowFallbackWhenUnhandled: true),
-        Route("main-member-flash", 57, IsMainMemberFlashPage, HandleMainMemberFlashAsync,
+            allowFallbackWhenUnhandled: true,
+            actionRetryAfterFrames: GetActionRetryAfterFrames),
+        Route("main-member-flash", 52, IsMainMemberFlashPage, HandleMainMemberFlashAsync,
             useActionBoundary: false),
-        Route("equipment", 54, IsEquipmentPage, HandleEquipmentAsync),
+        Route("boss-equipment-reward", 53, IsBossEquipmentRewardPage,
+            HandleBossEquipmentRewardAsync),
+        Route("equipment", 54, IsEquipmentPage, HandleEquipmentAsync,
+            useActionBoundary: false,
+            allowFallbackWhenUnhandled: false),
         Route("card-assign", 55,
             page => HasContainedTextAtPoint(page, 0.863, 0.133, "请选择要接受卡牌的主战员"),
             HandleCardAssignAsync),
@@ -54,8 +70,7 @@ public sealed partial class ChaosModeTask
             HandleGrantFlashAsync),
         Route("copy", 180,
             page => HasExactTextAtPoint(page, 0.945, 0.918, "复制"),
-            HandleCopyAsync,
-            useActionBoundary: false),
+            HandleCopyAsync),
         Route("leave", 190,
             page => HasTextAtPoint(page, 0.945, 0.918, "离开"),
             HandleLeaveAsync),
@@ -92,13 +107,13 @@ public sealed partial class ChaosModeTask
         Route("destiny-choice", 310,
             page => HasContainedTextAtPoint(page, 0.499, 0.932, "请选择你的命运"),
             HandleDestinyChoiceAsync),
-        Route("card-reward", 320,
-            page => RegionText(page, new RelativeRegion(0.345, 0.012, 0.642, 0.141))
-                .Contains("卡牌奖励", StringComparison.Ordinal),
-            HandleCardRewardAsync),
+        Route("card-reward", 320, IsCardRewardPage, HandleCardRewardAsync),
         Route("select-card", 325, IsSelectCardPage, HandleSelectCardAsync),
-        Route("copy-member", 340,
-            page => HasContainedTextAtPoint(page, 0.502, 0.932, "选择要复制卡牌的主战员"),
+        Route("copy-card-choice", 330,
+            page => HasContainedTextAtPoint(page, 0.498, 0.133, "请选择要复制的卡牌"),
+            HandleCopyCardChoiceAsync),
+        Route("copy-member", 53,
+            IsCopyMemberPage,
             HandleCopyMemberAsync,
             useActionBoundary: false),
         Route("convert-card", 350,
@@ -106,8 +121,14 @@ public sealed partial class ChaosModeTask
             HandleConvertCardAsync),
         Route("discovery-select", 355, IsDiscoverySelectPage, HandleDiscoverySelectAsync),
         Route("negotiation", 360,
-            page => HasContainedTextAtPoint(page, 0.498, 0.683, "失败"),
+            page => HasTextAtPoint(page, 0.498, 0.683, "失败"),
             HandleNegotiationAsync),
+        Route("chaos-reward-settlement", 365,
+            page => HasContainedTextAtPoint(page, 0.552, 0.067, "结算"),
+            HandleChaosRewardSettlementAsync),
+        Route("chaos-reward-claim", 366,
+            page => HasContainedTextAtPoint(page, 0.568, 0.711, "获得"),
+            HandleChaosRewardClaimAsync),
         Route("continue", 370,
             page => HasTextInRegion(page, new RelativeRegion(0.459, 0.858, 0.992, 0.988), "继续"),
             HandleContinueAsync),
@@ -116,8 +137,9 @@ public sealed partial class ChaosModeTask
             HandleEnterAsync),
         Route("obtain-reward", 390,
             page => HasTextAtPoint(page, 0.924, 0.922, "获得"),
-            HandleObtainRewardAsync),
-        Route("flash-effect", 400, IsFlashEffectPage, HandleFlashEffectAsync, allowFallbackWhenUnhandled: true),
+            HandleObtainRewardAsync,
+            actionRetryAfterFrames: GetActionRetryAfterFrames),
+        Route("flash-effect", 364, IsFlashEffectPage, HandleFlashEffectAsync, allowFallbackWhenUnhandled: true),
         Route("treating", 410,
             page => FindTextAnywhere(page, GameText(page, "选择哪种方法进行治疗")) is not null,
             HandleTreatingAsync),
@@ -140,14 +162,12 @@ public sealed partial class ChaosModeTask
             HandleConquerDifficultyAsync),
         Route("skip", 490,
             page => HasTextAtPoint(page, 0.941, 0.917, "跳过"),
-            HandleSkipAsync),
+            HandleSkipAsync,
+            expectsCenterConfirmation: true),
         Route("held-cards", 500,
             page => HasTextAtPoint(page, 0.5, 0.056, "持有卡牌"),
             HandleHeldCardsPageAsync),
-        Route("escape", 510,
-            page => HasTextAtPoint(page, 0.952, 0.928, "逃脱")
-                    || HasTextAtPoint(page, 0.952, 0.928, "脱逃"),
-            HandleEscapeAsync),
+        Route("escape", 510, ShouldHandleEscapePage, HandleEscapeAsync),
         Route("stage-end-data-details", 520, IsStageEndDataDetailsPage, HandleStageEndDataDetailsAsync)
     ];
 
@@ -158,8 +178,36 @@ public sealed partial class ChaosModeTask
         Func<ChaosModePage, CancellationToken, ValueTask<bool>> handler,
         bool useActionBoundary = true,
         // 对应 Python PAGE_HANDLERS：处理器返回 False 后继续尝试后续页面处理器。
-        bool allowFallbackWhenUnhandled = true)
-        => new(id, priority, matches, handler, useActionBoundary, allowFallbackWhenUnhandled);
+        bool allowFallbackWhenUnhandled = true,
+        bool expectsCenterConfirmation = false,
+        Func<ChaosModePage, int>? actionRetryAfterFrames = null,
+        bool isPriorityOverlay = false)
+        => new(
+            id,
+            priority,
+            matches,
+            handler,
+            useActionBoundary,
+            allowFallbackWhenUnhandled,
+            expectsCenterConfirmation,
+            actionRetryAfterFrames,
+            isPriorityOverlay);
+
+    private static int GetActionRetryAfterFrames(ChaosModePage page)
+        => Math.Clamp(
+            page.Context.GetTaskConfig(
+                ChaosModeConfigSchema.RecognitionFallbackWaitRoundsKey,
+                2),
+            1,
+            10);
+
+    private static int GetActionRecoveryWaitFrames(ChaosModePage page)
+        => Math.Clamp(
+            page.Context.GetTaskConfig(
+                ChaosModeConfigSchema.ActionRecoveryWaitFramesKey,
+                5),
+            2,
+            20);
 
     private static bool HasExactTextAtPoint(
         ChaosModePage page,
@@ -195,6 +243,12 @@ public sealed partial class ChaosModeTask
 
     private static bool ShouldHandleConfirmButton(ChaosModePage page)
     {
+        // 主战员选择是有状态流程，选择与确认必须由同一消费者闭环处理。
+        if (IsCopyMemberPage(page) || IsMainMemberFlashPage(page))
+        {
+            return false;
+        }
+
         var line = FindText(
             page,
             new RelativeRegion(0.267, 0.867, 0.991, 0.979),
@@ -214,6 +268,13 @@ public sealed partial class ChaosModeTask
         string expected)
         => FindText(page, region, GameText(page, expected)) is not null;
 
+    private static bool IsCardRewardPage(ChaosModePage page)
+    {
+        var title = RegionText(page, new RelativeRegion(0.345, 0.012, 0.642, 0.141));
+        return title.Contains("卡牌奖励", StringComparison.Ordinal)
+               || title.Contains("获得卡牌", StringComparison.Ordinal);
+    }
+
     private static bool IsEventTaskPage(ChaosModePage page)
     {
         var bottom = FindBoxAtPoint(page, 0.516, 0.971);
@@ -228,17 +289,69 @@ public sealed partial class ChaosModeTask
 
     private static bool IsEquipmentPage(ChaosModePage page)
     {
-        if (!HasTextAtPoint(page, 0.499, 0.126, "装备"))
+        var hasTitle = HasTextAtPoint(page, 0.499, 0.126, "装备");
+        var hasInstallLayout = IsEquipmentInstallPage(page);
+        // 装备消费者只能认领有明确装备页面证据的帧。
+        // 装备页从选人到确认都由同一个消费者处理，避免旧帧确认证据跨路由误点。
+        return hasTitle || hasInstallLayout;
+    }
+
+    private static bool IsBossEquipmentRewardPage(ChaosModePage page)
+    {
+        // The equipment reward overlay appears before the normal equipment choice page.
+        // Its right-side category label is not an equipment page title.
+        var hasRewardSummary = HasContainedTextAtPoint(page, 0.866, 0.208, "\u672A\u53D1\u73B0\u7684\u95EA\u5149");
+        var hasEquipmentCategory = FindOcrBoxes(
+                page,
+                new RelativeRegion(0.820, 0.180, 0.970, 0.550))
+            .Any(line => line.Text.Contains("\u88C5\u5907", StringComparison.Ordinal));
+        var hasClaimButton = HasTextAtPoint(page, 0.932, 0.916, "\u83B7\u5F97");
+        var hasSkipButton = HasTextAtPoint(page, 0.736, 0.916, "\u8DF3\u8FC7");
+        var hasCenteredEquipmentTitle = HasExactTextAtPoint(page, 0.499, 0.126, "\u88C5\u5907");
+        var hasInstallPrompt = HasContainedTextAtPoint(page, 0.921, 0.135, "\u8BF7\u9009\u62E9\u4E3B\u6218\u5458");
+
+        return hasRewardSummary
+               && hasEquipmentCategory
+               && hasClaimButton
+               && hasSkipButton
+               && !hasCenteredEquipmentTitle
+               && !hasInstallPrompt;
+    }
+
+    private static bool IsEquipmentInstallPage(ChaosModePage page)
+    {
+        if (HasContainedTextAtPoint(page, 0.921, 0.135, "请选择主战员"))
         {
-            return false;
+            return true;
         }
 
-        // 选完主战员后，页面可能继续保留“装备”标题；此时交给确认路由点击。
-        return FindText(
-            page,
-            new RelativeRegion(0.267, 0.867, 0.991, 0.979),
-            GameText(page, "确认")) is null;
+        // 实机 OCR 偶尔只保留标题和装备详情，漏掉右上角提示。
+        // 单件安装页的装备名位于该区域；两选一页面的候选名不在此处。
+        var hasTitle = HasTextAtPoint(page, 0.499, 0.126, "\u88C5\u5907");
+        var hasMemberComparisonHint = page.Recognized.Lines.Any(line =>
+            line.Text.Contains("\u957F\u6309\u5DF2\u4F69\u6234\u88C5\u5907\u7684\u56FE\u6807\u53EF\u8FDB\u884C\u6BD4\u8F83", StringComparison.Ordinal)
+            || line.Text.Contains("\u9577\u6309\u5DF2\u4F69\u6234\u88DD\u5099\u7684\u5716\u6A19\u53EF\u9032\u884C\u6BD4\u8F03", StringComparison.Ordinal));
+        if (hasTitle && hasMemberComparisonHint)
+        {
+            return true;
+        }
+
+        var installNameRegion = new RelativeRegion(0.217, 0.379, 0.469, 0.436);
+        return FindOcrBoxes(page, installNameRegion)
+            .Any(line =>
+                line.Score >= 0.5
+                && ChaosEquipmentCatalog.Normalize(line.Text).Length >= 2
+                && ChaosEquipmentCatalog.Default.FindSlot(line.Text) is not null);
     }
+
+    private static bool IsEquipmentChoiceConfirmPage(ChaosModePage page)
+    {
+        // 普通装备和 Boss 装备都会先在二选一/选择页确认，再进入后续安装或主战员分配页。
+        return HasTextAtPoint(page, 0.499, 0.126, "装备")
+               && HasContainedTextAtPoint(page, 0.921, 0.135, "请选择装备")
+               && FindFooterConfirmBox(page) is not null;
+    }
+
     private static bool IsShopPage(ChaosModePage page)
     {
         var removeCardBox = FindBoxAtPoint(page, 0.729, 0.261);
@@ -263,6 +376,21 @@ public sealed partial class ChaosModeTask
                    && page.State.Shop);
     }
 
+    private static bool ShouldHandleEscapePage(ChaosModePage page)
+    {
+        var hasEscapeButton = HasTextAtPoint(page, 0.952, 0.928, "逃脱")
+                              || HasTextAtPoint(page, 0.952, 0.928, "脱逃");
+        if (!hasEscapeButton)
+        {
+            return false;
+        }
+
+        // 普通地图也常驻右下角“逃脱”。没有待处理指令时，只有确认弹窗
+        // （具备“取消”按钮）才允许进入该消费者。
+        return page.Commands.HasPendingEscape
+               || FindTextAnywhere(page, GameText(page, "取消")) is not null;
+    }
+
     private static bool IsThreeChoiceRemovePage(ChaosModePage page)
         => FindOcrBoxes(page, new RelativeRegion(0.507, 0.889, 0.740, 0.967))
             .Any(line => ContainsAny(page, line, "移除"));
@@ -272,6 +400,9 @@ public sealed partial class ChaosModeTask
         var prompt = FindBoxAtPoint(page, 0.495, 0.936);
         return prompt is not null && ContainsAny(page, prompt, "请选择获得");
     }
+
+    private static bool IsCopyMemberPage(ChaosModePage page)
+        => HasContainedTextAtPoint(page, 0.502, 0.932, "选择要复制卡牌的主战员");
 
     private static bool IsNextStepPage(ChaosModePage page)
     {
@@ -301,7 +432,21 @@ public sealed partial class ChaosModeTask
     }
 
     private static bool IsFlashEffectPage(ChaosModePage page)
-        => FindTextAnywhere(page, GameText(page, "请决定闪光效果")) is not null;
+        => FindTextAnywhere(page, GameText(page, "请决定闪光效果")) is not null
+           || HasViewOriginalFlashMarker(page);
+
+    private static bool HasViewOriginalFlashMarker(ChaosModePage page)
+    {
+        var first = FindBoxAtPoint(page, 0.890, 0.051);
+        var second = FindBoxAtPoint(page, 0.896, 0.131);
+        return ContainsViewOriginalMarker(page, first)
+               || ContainsViewOriginalMarker(page, second);
+    }
+
+    private static bool ContainsViewOriginalMarker(ChaosModePage page, OcrTextLine? line)
+        => line is not null
+           && (ContainsAny(page, line, "查看原件")
+               || ContainsAny(page, line, "查看之前的闪光"));
 
     private static bool IsZeroSystemHomePage(ChaosModePage page)
     {

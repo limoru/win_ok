@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017143733432",
+  "consumerId": "settlement",
+  "frameSequence": 355,
+  "capturedAt": "2026-10-17T14:42:18.9181991+08:00",
+  "archivedAt": "2026-10-17T14:42:19.8249551+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "D20A19CC02EF532BB986C3C58ED5E6994C784C604B3DF485F0E2DB925FA865ED-20261017-144218918-WIN-01-355.png",
+  "imageSha256": "D20A19CC02EF532BB986C3C58ED5E6994C784C604B3DF485F0E2DB925FA865ED",
+  "textSignature": "EFDF4594A85FEE08E10AB673CC2AA986E8EBC2DB55CE11964E855147A5B2560F",
+  "ocr": {
+    "text": "6OO\r\n2931/2931\r\n.\r\n00\r\n1126\r\n)\r\n\u306B5\r\n\u7ED3\u7B97",
+    "score": 0.7138209274659554,
+    "lines": [
+      {
+        "text": "6OO",
+        "score": 0.1773063987493515,
+        "x": 133,
+        "y": 64,
+        "width": 61,
+        "height": 29
+      },
+      {
+        "text": "2931/2931",
+        "score": 0.9944347672992282,
+        "x": 263,
+        "y": 21,
+        "width": 153,
+        "height": 28
+      },
+      {
+        "text": ".",
+        "score": 0.17338062822818756,
+        "x": 339,
+        "y": 67,
+        "width": 49,
+        "height": 25
+      },
+      {
+        "text": "00",
+        "score": 0.37483905255794525,
+        "x": 430,
+        "y": 46,
+        "width": 171,
+        "height": 55
+      },
+      {
+        "text": "1126",
+        "score": 0.9987324476242065,
+        "x": 1134,
+        "y": 28,
+        "width": 68,
+        "height": 35
+      },
+      {
+        "text": ")",
+        "score": 0.10851828753948212,
+        "x": 1385,
+        "y": 31,
+        "width": 42,
+        "height": 30
+      },
+      {
+        "text": "\u306B5",
+        "score": 0.3120313733816147,
+        "x": 251,
+        "y": 48,
+        "width": 83,
+        "height": 51
+      },
+      {
+        "text": "\u7ED3\u7B97",
+        "score": 0.9996502995491028,
+        "x": 1473,
+        "y": 804,
+        "width": 67,
+        "height": 42
+      }
+    ]
+  }
+}

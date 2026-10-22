@@ -11,8 +11,8 @@ public sealed record TemplateMatchOptions(
     double ScaleStep,
     int MaximumResults)
 {
-    public static TemplateMatchOptions SingleScale(double threshold)
-        => new(threshold, 1.0, 1.0, 0.05, 1);
+    public static TemplateMatchOptions SingleScale(double threshold, int maximumResults = 1)
+        => new(threshold, 1.0, 1.0, 0.05, maximumResults);
 
     public static TemplateMatchOptions MultiScale(double threshold)
         => new(threshold, 0.80, 1.20, 0.05, 20);

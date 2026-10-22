@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017130202874",
+  "consumerId": "close-page",
+  "frameSequence": 61,
+  "capturedAt": "2026-10-17T13:02:51.8713821+08:00",
+  "archivedAt": "2026-10-17T13:02:52.4680381+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "86D45F02AE343BC753D18CA65DF9EDAE9E621E4D401EBBD7BDE24DC0EF17A2F6-20261017-130251871-WIN-01-61.png",
+  "imageSha256": "86D45F02AE343BC753D18CA65DF9EDAE9E621E4D401EBBD7BDE24DC0EF17A2F6",
+  "textSignature": "C68EFBDD7CDB8A1163F6269C16840DD78B77BC553B8498BDA1476C85AEA41820",
+  "ocr": {
+    "text": "EHENFIT\r\n\u5361\u724C\u79FB\u9664\u5B8C\u6210\r\n\u2207\r\n\u70B9\u51FB\u5C4F\u5E55\u53EF\u5173\u95ED",
+    "score": 0.8910739464419228,
+    "lines": [
+      {
+        "text": "EHENFIT",
+        "score": 0.714603487934385,
+        "x": 75,
+        "y": 74,
+        "width": 48,
+        "height": 15
+      },
+      {
+        "text": "\u5361\u724C\u79FB\u9664\u5B8C\u6210",
+        "score": 0.9999205768108368,
+        "x": 688,
+        "y": 78,
+        "width": 230,
+        "height": 48
+      },
+      {
+        "text": "\u2207",
+        "score": 0.7114618420600891,
+        "x": 781,
+        "y": 785,
+        "width": 35,
+        "height": 37
+      },
+      {
+        "text": "\u70B9\u51FB\u5C4F\u5E55\u53EF\u5173\u95ED",
+        "score": 0.999906165259225,
+        "x": 704,
+        "y": 826,
+        "width": 196,
+        "height": 36
+      }
+    ]
+  }
+}

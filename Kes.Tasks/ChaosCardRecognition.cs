@@ -184,7 +184,7 @@ public static class ChaosCardRecognition
         {
             foreach (var card in cards)
             {
-                if (IsSubsequence(keyword, $"{card.Name}：:{card.Description}"))
+                if (MatchesFlashPriority(card, keyword))
                 {
                     return card;
                 }
@@ -192,6 +192,18 @@ public static class ChaosCardRecognition
         }
 
         return null;
+    }
+
+    public static bool MatchesFlashPriority(ChaosCardInfo card, string? flashPriority)
+    {
+        ArgumentNullException.ThrowIfNull(card);
+        if (string.IsNullOrWhiteSpace(flashPriority))
+        {
+            return false;
+        }
+
+        var keyword = string.Concat(flashPriority.Where(character => !char.IsWhiteSpace(character)));
+        return keyword.Length > 0 && IsSubsequence(keyword, $"{card.Name}：:{card.Description}");
     }
 
     public static bool IsSubsequence(string first, string second)

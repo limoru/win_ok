@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017131756314",
+  "consumerId": "close-page",
+  "frameSequence": 77,
+  "capturedAt": "2026-10-17T13:18:56.9217768+08:00",
+  "archivedAt": "2026-10-17T13:18:57.7466712+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "39C8C80E2755D9B7AC6CA644CBE172C02CB24E14E002A00A313ACADA2B6037B5-20261017-131856921-WIN-01-77.png",
+  "imageSha256": "39C8C80E2755D9B7AC6CA644CBE172C02CB24E14E002A00A313ACADA2B6037B5",
+  "textSignature": "344955D0FF2E2B014FF3EA442FE11196A69B7D6059A086E6DD072D99EA777B6E",
+  "ocr": {
+    "text": "EHENFI\r\n\u5361\u724C\u95EA\u5149\r\n\uD83C\uDF81\r\n\u5B64\u80C6\u6E38\u4FA0\r\n\u5F3A\u5316\r\n[\u552F\u4E00/\u5148\u5BFC]\r\n\u9020\u6210\u4F24\u5BB3\u65F6\uFF0C\u5B9A\u70B9\u72D9\u51FB2\r\n\u2207\r\n\u70B9\u51FB\u5C4F\u5E55\u53EF\u5173\u95ED",
+    "score": 0.9111995338038965,
+    "lines": [
+      {
+        "text": "EHENFI",
+        "score": 0.7130138079325358,
+        "x": 68,
+        "y": 74,
+        "width": 55,
+        "height": 15
+      },
+      {
+        "text": "\u5361\u724C\u95EA\u5149",
+        "score": 0.9999133944511414,
+        "x": 719,
+        "y": 75,
+        "width": 156,
+        "height": 54
+      },
+      {
+        "text": "\uD83C\uDF81",
+        "score": 0.6622521281242371,
+        "x": 606,
+        "y": 190,
+        "width": 13,
+        "height": 16
+      },
+      {
+        "text": "\u5B64\u80C6\u6E38\u4FA0",
+        "score": 0.9721854478120804,
+        "x": 693,
+        "y": 208,
+        "width": 155,
+        "height": 50
+      },
+      {
+        "text": "\u5F3A\u5316",
+        "score": 0.9045886099338531,
+        "x": 701,
+        "y": 249,
+        "width": 108,
+        "height": 41
+      },
+      {
+        "text": "[\u552F\u4E00/\u5148\u5BFC]",
+        "score": 0.8583442866802216,
+        "x": 719,
+        "y": 616,
+        "width": 180,
+        "height": 40
+      },
+      {
+        "text": "\u9020\u6210\u4F24\u5BB3\u65F6\uFF0C\u5B9A\u70B9\u72D9\u51FB2",
+        "score": 0.9966898127035662,
+        "x": 648,
+        "y": 655,
+        "width": 311,
+        "height": 32
+      },
+      {
+        "text": "\u2207",
+        "score": 0.8209934234619141,
+        "x": 779,
+        "y": 785,
+        "width": 29,
+        "height": 33
+      },
+      {
+        "text": "\u70B9\u51FB\u5C4F\u5E55\u53EF\u5173\u95ED",
+        "score": 0.9999469178063529,
+        "x": 695,
+        "y": 826,
+        "width": 198,
+        "height": 36
+      }
+    ]
+  }
+}

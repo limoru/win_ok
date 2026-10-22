@@ -9,10 +9,16 @@ public static class ChaosModeConfigSchema
     public const string NoSeasonContent = "不启用赛季内容";
     public const string SongInGalaxySeason = "回荡在银河中的歌声";
     public const string BrokenLightAndClawSeason = "破碎之光与利爪";
+    public const string SnowboundPromiseSeason = "凝结于雪上的约定";
     public const string EquipmentGroupName = "装备";
     public const string EngravingGroupName = "回荡在银河中的歌声 · 刻印与面具";
     public const string BrokenLightAndClawGroupName = "破碎之光与利爪 · 欲望卡牌";
+    public const string SnowboundPromiseGroupName = "凝结于雪上的约定 · 铭刻记忆";
+    public const string SnowMemoryPriorityKey = "选择铭刻的记忆";
+    public const string SnowPrecisionMemoryPriorityKey = "选择铭刻的记忆（加工记忆）";
     public const string RecognitionFallbackWaitRoundsKey = "识别失败等待轮数";
+    public const string FrameDispatchErrorAlertThresholdKey = "帧总线连续错误报警次数";
+    public const string ActionRecoveryWaitFramesKey = "动作自动恢复等待帧数";
 
     public static TaskConfigSchema Instance { get; } = new(
         "ChaosMode",
@@ -24,7 +30,7 @@ public static class ChaosModeConfigSchema
                 [
                     Choice(
                         SeasonSelectorKey,
-                        [NoSeasonContent, SongInGalaxySeason, BrokenLightAndClawSeason],
+                        [NoSeasonContent, SongInGalaxySeason, BrokenLightAndClawSeason, SnowboundPromiseSeason],
                         NoSeasonContent,
                         "选择后显示对应的赛季专属配置。")
                 ],
@@ -45,6 +51,18 @@ public static class ChaosModeConfigSchema
                         minimum: 1,
                         maximum: 10,
                         "关键操作连续未识别达到该轮数后，停止固定位置点击并保存诊断现场。"),
+                    Integer(
+                        FrameDispatchErrorAlertThresholdKey,
+                        3,
+                        minimum: 3,
+                        maximum: 5,
+                        "帧总线同类错误连续达到该次数后只报警一次；成功处理一帧后重新计数。"),
+                    Integer(
+                        ActionRecoveryWaitFramesKey,
+                        5,
+                        minimum: 2,
+                        maximum: 20,
+                        "快速重试达到上限后等待若干帧再重新识别并执行恢复；避免永久卡死。"),
                     Integer("存储数据保存上限大于多少", 120, minimum: 0, maximum: 170),
                     Integer("保留大于多少TB的存档", 62000),
                     Boolean("领取奖励(只使用验证卡)", false),
@@ -83,6 +101,7 @@ public static class ChaosModeConfigSchema
             new TaskConfigGroupDescriptor(
                 "路线",
                 [
+                    Boolean("首层刷特定闪光", false, "默认刷闪光优先级第一张；第一层未刷出时退出重刷。"),
                     Boolean("只打第一层", false),
                     List("第一层路线优先级", ["商店", "休息", "事件", "小怪", "精英"], "按顺序选择路线节点；“商店”也是一项可排序节点。"),
                     List("第二层路线优先级", ["商店", "休息", "事件", "小怪", "精英"], "按顺序选择路线节点；“商店”也是一项可排序节点。")
@@ -93,6 +112,14 @@ public static class ChaosModeConfigSchema
                 BrokenLightAndClawGroupName,
                 [
                     List("欲望卡牌优先级", ["梦之边境"])
+                ],
+                IsCollapsible: true,
+                IsInitiallyExpanded: true),
+            new TaskConfigGroupDescriptor(
+                SnowboundPromiseGroupName,
+                [
+                    List(SnowMemoryPriorityKey, [], "选择铭刻的记忆时优先匹配的卡牌名；留空时会逐张重新搜索，耗尽后随机选择。"),
+                    List(SnowPrecisionMemoryPriorityKey, [], "精密加工记忆时优先匹配的卡牌名；留空时随机选择。")
                 ],
                 IsCollapsible: true,
                 IsInitiallyExpanded: true),

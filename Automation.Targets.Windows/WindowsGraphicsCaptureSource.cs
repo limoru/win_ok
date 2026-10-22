@@ -186,13 +186,20 @@ internal sealed class WindowsGraphicsCaptureSource : IDisposable
             var height = checked((int)description.Height);
             var stride = checked(width * 4);
             var pixels = new byte[checked(stride * height)];
-            for (var row = 0; row < height; row++)
+            if (mapped.RowPitch == stride)
             {
-                Marshal.Copy(
-                    mapped.DataPointer + (row * checked((int)mapped.RowPitch)),
-                    pixels,
-                    row * stride,
-                    stride);
+                Marshal.Copy(mapped.DataPointer, pixels, 0, pixels.Length);
+            }
+            else
+            {
+                for (var row = 0; row < height; row++)
+                {
+                    Marshal.Copy(
+                        mapped.DataPointer + (row * checked((int)mapped.RowPitch)),
+                        pixels,
+                        row * stride,
+                        stride);
+                }
             }
 
             return CropToClient(
@@ -249,14 +256,26 @@ internal sealed class WindowsGraphicsCaptureSource : IDisposable
 
         var targetStride = checked(width * 4);
         var cropped = new byte[checked(targetStride * height)];
-        for (var row = 0; row < height; row++)
+        if (offsetX == 0 && targetStride == frame.Width * 4)
         {
             Buffer.BlockCopy(
                 frame.BgraPixels,
-                ((offsetY + row) * frame.Width * 4) + (offsetX * 4),
+                offsetY * frame.Width * 4,
                 cropped,
-                row * targetStride,
-                targetStride);
+                0,
+                cropped.Length);
+        }
+        else
+        {
+            for (var row = 0; row < height; row++)
+            {
+                Buffer.BlockCopy(
+                    frame.BgraPixels,
+                    ((offsetY + row) * frame.Width * 4) + (offsetX * 4),
+                    cropped,
+                    row * targetStride,
+                    targetStride);
+            }
         }
 
         return new CapturedWindowFrame(

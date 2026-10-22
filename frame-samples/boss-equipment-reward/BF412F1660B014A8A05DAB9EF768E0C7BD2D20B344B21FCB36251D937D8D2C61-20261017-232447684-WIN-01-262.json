@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017232123933",
+  "consumerId": "boss-equipment-reward",
+  "frameSequence": 262,
+  "capturedAt": "2026-10-17T23:24:47.6849204+08:00",
+  "archivedAt": "2026-10-17T23:24:48.7785828+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "BF412F1660B014A8A05DAB9EF768E0C7BD2D20B344B21FCB36251D937D8D2C61-20261017-232447684-WIN-01-262.png",
+  "imageSha256": "BF412F1660B014A8A05DAB9EF768E0C7BD2D20B344B21FCB36251D937D8D2C61",
+  "textSignature": "98196D2D5BDD39C7766003810BB38EB497C621E40852B001B54021C4EDA87E14",
+  "ocr": {
+    "text": "OO\r\n2809/2809\r\n\u00B7\r\n361\r\n\u65E5\r\n\u672A\u53D1\u73B0\u7684\u95EA\u5149\r\n\u5361\u724C\u590D\u5236\r\n\u54C1\r\n\u88C5\u5907\r\n\u4FE1\u7528\u70B9\r\n116\r\n\u8DF3\u8FC7\r\n\u83B7\u5F97\r\n3",
+    "score": 0.9094555459916591,
+    "lines": [
+      {
+        "text": "OO",
+        "score": 0.2078433483839035,
+        "x": 123,
+        "y": 64,
+        "width": 64,
+        "height": 29
+      },
+      {
+        "text": "2809/2809",
+        "score": 0.9856184985902574,
+        "x": 244,
+        "y": 19,
+        "width": 175,
+        "height": 28
+      },
+      {
+        "text": "\u00B7",
+        "score": 0.21675348281860352,
+        "x": 291,
+        "y": 64,
+        "width": 92,
+        "height": 31
+      },
+      {
+        "text": "361",
+        "score": 0.9991090496381124,
+        "x": 1136,
+        "y": 27,
+        "width": 58,
+        "height": 38
+      },
+      {
+        "text": "\u65E5",
+        "score": 0.5284627676010132,
+        "x": 1377,
+        "y": 30,
+        "width": 42,
+        "height": 35
+      },
+      {
+        "text": "\u672A\u53D1\u73B0\u7684\u95EA\u5149",
+        "score": 0.9999279578526815,
+        "x": 1307,
+        "y": 165,
+        "width": 160,
+        "height": 43
+      },
+      {
+        "text": "\u5361\u724C\u590D\u5236",
+        "score": 0.9563560634851456,
+        "x": 1316,
+        "y": 253,
+        "width": 239,
+        "height": 100
+      },
+      {
+        "text": "\u54C1",
+        "score": 0.5821762084960938,
+        "x": 23,
+        "y": 407,
+        "width": 37,
+        "height": 31
+      },
+      {
+        "text": "\u88C5\u5907",
+        "score": 0.9997713267803192,
+        "x": 1403,
+        "y": 400,
+        "width": 61,
+        "height": 35
+      },
+      {
+        "text": "\u4FE1\u7528\u70B9",
+        "score": 0.9998744328816732,
+        "x": 1381,
+        "y": 491,
+        "width": 86,
+        "height": 40
+      },
+      {
+        "text": "116",
+        "score": 0.9850427309672037,
+        "x": 1414,
+        "y": 520,
+        "width": 52,
+        "height": 34
+      },
+      {
+        "text": "\u8DF3\u8FC7",
+        "score": 0.9999139308929443,
+        "x": 1141,
+        "y": 801,
+        "width": 73,
+        "height": 46
+      },
+      {
+        "text": "\u83B7\u5F97",
+        "score": 0.9990260601043701,
+        "x": 1432,
+        "y": 801,
+        "width": 71,
+        "height": 45
+      },
+      {
+        "text": "3",
+        "score": 0.9900829195976257,
+        "x": 1522,
+        "y": 810,
+        "width": 26,
+        "height": 27
+      }
+    ]
+  }
+}

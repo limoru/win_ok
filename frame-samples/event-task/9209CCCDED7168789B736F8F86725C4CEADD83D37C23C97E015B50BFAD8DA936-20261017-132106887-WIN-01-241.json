@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017131756314",
+  "consumerId": "event-task",
+  "frameSequence": 241,
+  "capturedAt": "2026-10-17T13:21:06.8874713+08:00",
+  "archivedAt": "2026-10-17T13:21:08.1568934+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "9209CCCDED7168789B736F8F86725C4CEADD83D37C23C97E015B50BFAD8DA936-20261017-132106887-WIN-01-241.png",
+  "imageSha256": "9209CCCDED7168789B736F8F86725C4CEADD83D37C23C97E015B50BFAD8DA936",
+  "textSignature": "C860673369728DFA202B717210946CFA2ADA623452F78ECC7FBB4C31047DC840",
+  "ocr": {
+    "text": "00\r\n2800/2800\r\n\u25A1\r\n000\r\n183\r\n-\r\n\u65B0\r\n\u8FD9\u91CC\u662F\u88AB\u5F7B\u5E95\u7834\u574F\u7684\u5165\u4FB5\u8005\u5B75\u5316\u573A\u3002\r\n\u521A\u6253\u7834\u4E0D\u4E45\u7684\u86CB\u91CC\u6D41\u6DCC\u51FA\u7CBE\u534E\u3002\r\nO\r\nQ\r\n\u5236\u9020\u88C5\u5907\r\n\u559D\u4E0B\u7CBE\u534E\r\n\u83B7\u5F97\u88C5\u5907[\u5E73\u884C\u5B87\u5B99\u8026\u5408\u4F53]\r\n\u6240\u6709\u4E3B\u6218\u5458\u538B\u529B\u589E\u52A05\uFF0C\u5C06\u9009\u62E9\r\n\u7684\u666E\u901A\u5361\u724C\u8F6C\u6362\u4E3A\u5361\u724C[\u6697\u9ED1\u77E5\r\n\u8BC6]",
+    "score": 0.9526647398772748,
+    "lines": [
+      {
+        "text": "00",
+        "score": 0.24016571044921875,
+        "x": 26,
+        "y": 49,
+        "width": 160,
+        "height": 48
+      },
+      {
+        "text": "2800/2800",
+        "score": 0.9900321033265855,
+        "x": 244,
+        "y": 21,
+        "width": 178,
+        "height": 28
+      },
+      {
+        "text": "\u25A1",
+        "score": 0.32588693499565125,
+        "x": 329,
+        "y": 67,
+        "width": 52,
+        "height": 25
+      },
+      {
+        "text": "000",
+        "score": 0.4720604916413625,
+        "x": 427,
+        "y": 50,
+        "width": 161,
+        "height": 46
+      },
+      {
+        "text": "183",
+        "score": 0.9996135830879211,
+        "x": 1142,
+        "y": 28,
+        "width": 51,
+        "height": 35
+      },
+      {
+        "text": "-",
+        "score": 0.8725512027740479,
+        "x": 1513,
+        "y": 29,
+        "width": 31,
+        "height": 28
+      },
+      {
+        "text": "\u65B0",
+        "score": 0.9998821020126343,
+        "x": 78,
+        "y": 150,
+        "width": 28,
+        "height": 31
+      },
+      {
+        "text": "\u8FD9\u91CC\u662F\u88AB\u5F7B\u5E95\u7834\u574F\u7684\u5165\u4FB5\u8005\u5B75\u5316\u573A\u3002",
+        "score": 0.9995415508747101,
+        "x": 588,
+        "y": 171,
+        "width": 398,
+        "height": 35
+      },
+      {
+        "text": "\u521A\u6253\u7834\u4E0D\u4E45\u7684\u86CB\u91CC\u6D41\u6DCC\u51FA\u7CBE\u534E\u3002",
+        "score": 0.9997441342898777,
+        "x": 613,
+        "y": 206,
+        "width": 349,
+        "height": 33
+      },
+      {
+        "text": "O",
+        "score": 0.7604272961616516,
+        "x": 746,
+        "y": 421,
+        "width": 26,
+        "height": 20
+      },
+      {
+        "text": "Q",
+        "score": 0.9887901544570923,
+        "x": 743,
+        "y": 652,
+        "width": 20,
+        "height": 18
+      },
+      {
+        "text": "\u5236\u9020\u88C5\u5907",
+        "score": 0.9969602078199387,
+        "x": 407,
+        "y": 702,
+        "width": 98,
+        "height": 31
+      },
+      {
+        "text": "\u559D\u4E0B\u7CBE\u534E",
+        "score": 0.999867171049118,
+        "x": 824,
+        "y": 700,
+        "width": 102,
+        "height": 37
+      },
+      {
+        "text": "\u83B7\u5F97\u88C5\u5907[\u5E73\u884C\u5B87\u5B99\u8026\u5408\u4F53]",
+        "score": 0.9994533016131475,
+        "x": 409,
+        "y": 739,
+        "width": 294,
+        "height": 28
+      },
+      {
+        "text": "\u6240\u6709\u4E3B\u6218\u5458\u538B\u529B\u589E\u52A05\uFF0C\u5C06\u9009\u62E9",
+        "score": 0.9977414395127978,
+        "x": 828,
+        "y": 735,
+        "width": 341,
+        "height": 35
+      },
+      {
+        "text": "\u7684\u666E\u901A\u5361\u724C\u8F6C\u6362\u4E3A\u5361\u724C[\u6697\u9ED1\u77E5",
+        "score": 0.9637184185641152,
+        "x": 828,
+        "y": 765,
+        "width": 336,
+        "height": 33
+      },
+      {
+        "text": "\u8BC6]",
+        "score": 0.9707823991775513,
+        "x": 828,
+        "y": 794,
+        "width": 41,
+        "height": 32
+      }
+    ]
+  }
+}

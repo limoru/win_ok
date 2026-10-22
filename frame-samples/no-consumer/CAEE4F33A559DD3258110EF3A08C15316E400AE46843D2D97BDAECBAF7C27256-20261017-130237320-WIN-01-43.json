@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "WIN-01",
+  "runId": "WIN-01-1-20261017130202874",
+  "consumerId": "no-consumer",
+  "frameSequence": 43,
+  "capturedAt": "2026-10-17T13:02:37.3209392+08:00",
+  "archivedAt": "2026-10-17T13:02:37.9537345+08:00",
+  "frameWidth": 1600,
+  "frameHeight": 900,
+  "imageFileName": "CAEE4F33A559DD3258110EF3A08C15316E400AE46843D2D97BDAECBAF7C27256-20261017-130237320-WIN-01-43.png",
+  "imageSha256": "CAEE4F33A559DD3258110EF3A08C15316E400AE46843D2D97BDAECBAF7C27256",
+  "textSignature": "9EEEDB3E78F537F16C25FE1DDF2C3412B8E8BA85985E35BBC7623E5BFD868477",
+  "ocr": {
+    "text": "2486/2486\r\n100\r\neoe\r\n-\r\n\u25A1\r\n\u4E2D\u65AF\r\nCC",
+    "score": 0.6727448708954311,
+    "lines": [
+      {
+        "text": "2486/2486",
+        "score": 0.9749628636572096,
+        "x": 254,
+        "y": 21,
+        "width": 170,
+        "height": 28
+      },
+      {
+        "text": "100",
+        "score": 0.9943726460138956,
+        "x": 1146,
+        "y": 31,
+        "width": 54,
+        "height": 29
+      },
+      {
+        "text": "eoe",
+        "score": 0.426458199818929,
+        "x": 41,
+        "y": 54,
+        "width": 157,
+        "height": 43
+      },
+      {
+        "text": "-",
+        "score": 0.06455264985561371,
+        "x": 295,
+        "y": 67,
+        "width": 33,
+        "height": 20
+      },
+      {
+        "text": "\u25A1",
+        "score": 0.2084842026233673,
+        "x": 338,
+        "y": 66,
+        "width": 50,
+        "height": 27
+      },
+      {
+        "text": "\u4E2D\u65AF",
+        "score": 0.16388918459415436,
+        "x": 436,
+        "y": 53,
+        "width": 83,
+        "height": 33
+      },
+      {
+        "text": "CC",
+        "score": 0.24483437836170197,
+        "x": 553,
+        "y": 69,
+        "width": 38,
+        "height": 18
+      }
+    ]
+  }
+}

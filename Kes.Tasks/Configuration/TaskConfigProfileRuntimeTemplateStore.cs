@@ -43,8 +43,31 @@ public sealed class TaskConfigProfileRuntimeTemplateStore : IRuntimeFeatureTempl
             Clone(template));
     }
 
-    private string CreateKey(string featureName)
-        => $"{_scope}{ScopeSeparator}{featureName}";
+    public void SaveBundle(IReadOnlyDictionary<string, RuntimeFeatureTemplate> templates)
+    {
+        ArgumentNullException.ThrowIfNull(templates);
+        var scoped = templates.ToDictionary(
+            pair => CreateKey(pair.Key),
+            pair => Clone(pair.Value),
+            StringComparer.Ordinal);
+        _store.SaveRuntimeTemplateBundle(_profile.Id, scoped);
+    }
+
+    public static string CreateScope(string profileId, string targetName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(profileId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetName);
+        return string.Concat(profileId, "|", targetName.Trim());
+    }
+
+    public static string CreateKey(string scope, string featureName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scope);
+        ArgumentException.ThrowIfNullOrWhiteSpace(featureName);
+        return string.Concat(scope, ScopeSeparator, featureName);
+    }
+
+    private string CreateKey(string featureName) => CreateKey(_scope, featureName);
 
     private static RuntimeFeatureTemplate Clone(RuntimeFeatureTemplate template)
         => template with { Pixels = template.Pixels.ToArray() };

@@ -89,4 +89,51 @@ public sealed class ChaosModeConfigTests
         Assert.Equal(1, option.Minimum);
         Assert.Equal(10, option.Maximum);
     }
+
+    [Fact]
+    public void FrameDispatchErrorAlertThresholdUsesSupportedRange()
+    {
+        var option = ChaosModeConfigSchema.Instance.Options.Single(option =>
+            option.Key == ChaosModeConfigSchema.FrameDispatchErrorAlertThresholdKey);
+
+        Assert.Equal(TaskConfigValueKind.Integer, option.Kind);
+        Assert.Equal(3, option.DefaultValue);
+        Assert.Equal(3, option.Minimum);
+        Assert.Equal(5, option.Maximum);
+    }
+
+    [Fact]
+    public void ActionRecoveryWaitFramesUsesSupportedRange()
+    {
+        var option = ChaosModeConfigSchema.Instance.Options.Single(option =>
+            option.Key == ChaosModeConfigSchema.ActionRecoveryWaitFramesKey);
+
+        Assert.Equal(TaskConfigValueKind.Integer, option.Kind);
+        Assert.Equal(5, option.DefaultValue);
+        Assert.Equal(2, option.Minimum);
+        Assert.Equal(20, option.Maximum);
+    }
+
+    [Fact]
+    public void SnowboundPromiseSeasonExposesOnlyItsMemoryPriorityFields()
+    {
+        var season = ChaosModeConfigSchema.Instance.Options.Single(option =>
+            option.Key == ChaosModeConfigSchema.SeasonSelectorKey);
+        Assert.Contains(ChaosModeConfigSchema.SnowboundPromiseSeason, season.Choices!);
+
+        var group = ChaosModeConfigSchema.Instance.Groups.Single(group =>
+            group.DisplayName == ChaosModeConfigSchema.SnowboundPromiseGroupName);
+        Assert.Equal(
+            [
+                ChaosModeConfigSchema.SnowMemoryPriorityKey,
+                ChaosModeConfigSchema.SnowPrecisionMemoryPriorityKey
+            ],
+            group.Options.Select(option => option.Key));
+        Assert.All(group.Options, option =>
+        {
+            Assert.Equal(TaskConfigValueKind.StringList, option.Kind);
+            Assert.Empty((IReadOnlyList<string>)option.DefaultValue);
+        });
+    }
+
 }

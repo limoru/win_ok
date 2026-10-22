@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="Automation.Core/Automation.Core.csproj" />
   <Project Path="Automation.Core.Tests/Automation.Core.Tests.csproj" />
+  <Project Path="Automation.MemoryProbe/Automation.MemoryProbe.csproj" />
   <Project Path="Automation.Targets.Windows/Automation.Targets.Windows.csproj" />
   <Project Path="Automation.Vision.Onnx/Automation.Vision.Onnx.csproj" />
   <Project Path="Kes.Gui/Kes.Gui.csproj" />

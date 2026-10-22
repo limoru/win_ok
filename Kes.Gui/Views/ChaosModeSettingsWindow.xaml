@@ -84,6 +84,83 @@
                         Margin="10,0,0,0"
                         Command="{Binding SaveProfileCommand}" />
             </Grid>
+
+            <Grid Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="0,0,12,0">
+                    <TextBlock Text="干员头像"
+                               Style="{StaticResource CaptionText}"
+                               VerticalAlignment="Center"
+                               Margin="0,0,8,0" />
+                    <TextBlock Text="{Binding AvatarCountText}"
+                               Style="{StaticResource SecondaryText}"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <ItemsControl Grid.Column="1"
+                              ItemsSource="{Binding AvatarPreviews}"
+                              VerticalAlignment="Center">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Width="48"
+                                    Height="48"
+                                    Margin="0,0,6,0"
+                                    CornerRadius="5"
+                                    Background="#12000000"
+                                    BorderBrush="{StaticResource ControlBorderBrush}"
+                                    BorderThickness="1"
+                                    ToolTip="{Binding Label}">
+                                <Grid>
+                                    <Image Source="{Binding Preview}"
+                                           Stretch="UniformToFill" />
+                                    <Button Width="17"
+                                            Height="17"
+                                            MinWidth="0"
+                                            Padding="0"
+                                            Margin="0"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Top"
+                                            Background="#D8FFFFFF"
+                                            BorderBrush="{StaticResource ControlBorderBrush}"
+                                            Command="{Binding DataContext.RemoveAvatarCommand, RelativeSource={RelativeSource AncestorType={x:Type Window}}}"
+                                            CommandParameter="{Binding}"
+                                            ToolTip="删除头像">
+                                        <iconPacks:PackIconLucide Kind="X"
+                                                                  Width="10"
+                                                                  Height="10" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Grid.Column="2"
+                        Style="{StaticResource SubtleButton}"
+                        Height="32"
+                        MinWidth="86"
+                        Margin="8,0,0,0"
+                        IsEnabled="{Binding CanAddAvatar}"
+                        Click="AddAvatarButton_Click">
+                    <StackPanel Orientation="Horizontal">
+                        <iconPacks:PackIconLucide Kind="ImagePlus"
+                                                  Width="14"
+                                                  Height="14"
+                                                  Margin="0,0,6,0" />
+                        <TextBlock Text="添加头像"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </Grid>
         </StackPanel>
 
         <Border Grid.Row="2"
