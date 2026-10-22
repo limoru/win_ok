@@ -1,63 +1,106 @@
-# C# 自动化重写 — 设计文档
+# Kes Automation
 
-本文件夹存放将现有卡厄思梦境 Python 自动化项目重写为 C# (.NET) 版本的架构设计文档。
+面向《卡厄思梦境》Windows 客户端的图像识别自动化工具。通过窗口抓帧、OCR、模板匹配和键鼠输入完成重复性流程，不修改游戏文件或数据。
 
-当前方案采用**统一目标架构、分阶段实现**：
+当前版本以 Windows PC 客户端为主，提供后台抓帧、多窗口独立任务、可视化任务方案，以及用于排查识别问题的开发测试工具。
 
-1. **第一阶段实现 Windows 游戏窗口目标**，用于快速调试截图、输入、OCR、模板匹配、任务状态机和配置热更新。
-2. **第二阶段接入 MuMu 模拟器目标**，复用同一套任务运行时、视觉层和配置系统，新增模拟器目标提供者即可。
-3. Windows PC 客户端与 Android 移动端可能存在 UI 差异，因此“运行目标”和“游戏 UI 配置”必须分开建模。
+## 主要能力
 
-本设计不再把整体架构限定为 MuMu，也不把 Windows 实现为一次性的调试分支。两种目标都必须实现统一的 `ITargetSession` 契约。
+### 自动卡厄思模式
 
-## 可行性结论
+- 识别路线与节点类型，按任务方案推进探索流程。
+- 处理事件选择、战斗衔接、结算与继续等常见页面。
+- 处理卡牌奖励、分配、复制、移除、闪光与装备选择。
+- 支持商店、休息、宝库、存储数据等流程。
+- 按配置处理主战员、卡牌优先级、路线优先级和赛季专属内容。
+- 主战员头像可随任务方案保存，减少重复识别并便于查看。
 
-C# 重写可行，而且适合这个项目。Windows 目标实现可以直接通过 P/Invoke 调用 Win32 API，通过 COM/WinRT 使用 `Windows.Graphics.Capture`，并使用 `System.Drawing`、OpenCvSharp 和 ONNX Runtime 完成图像与 OCR 链路。
+### 窗口与任务
 
-但“可以完全调用 Windows 底层”需要加一个边界：C# 可以调用公开的 Win32、COM 和 WinRT 接口，不能绕过 Windows 的安全模型。UIPI、进程完整性级别、管理员权限、会话隔离、受保护进程、反作弊以及独占图形表面，都可能让抓帧或输入失败。第一阶段必须把这些限制作为可检测、可降级、可提示的运行时能力，而不是假定所有窗口都能后台抓取和后台输入。
-## 阅读顺序
+- 自动发现可绑定的游戏窗口，只保留与游戏相关的运行目标。
+- 每个窗口可使用独立任务方案、配置和运行状态。
+- 同一窗口的操作按顺序执行，避免多个任务同时点击。
+- 任务方案可保存、切换和复用，方便为不同窗口分配不同目标。
 
-1. [00-overview.md](./00-overview.md) — 项目目标、非目标、统一目标架构与分阶段路线
-2. [01-architecture.md](./01-architecture.md) — 核心库、目标提供者、业务层和 GUI 的分层方式
-3. [02-instance-and-window-management.md](./02-instance-and-window-management.md) — Windows/MuMu 目标发现、绑定、会话生命周期与多开管理
-4. [03-capture-and-input-strategy.md](./03-capture-and-input-strategy.md) — 统一截图/输入接口、Windows 与 MuMu 的具体实现策略
-5. [04-config-system-and-hot-reload.md](./04-config-system-and-hot-reload.md) — 可插拔配置来源、每会话独立配置与热更新
-6. [05-task-framework-and-vision.md](./05-task-framework-and-vision.md) — 任务运行时、帧所有权、OCR 与模板匹配
-7. [06-gui-design.md](./06-gui-design.md) — 多会话状态监视、单会话配置和共享预览帧
-8. [07-migration-notes-from-python.md](./07-migration-notes-from-python.md) — 现有 Python 代码迁移对照与当前实际工作量
-9. [08-open-questions-and-risks.md](./08-open-questions-and-risks.md) — Windows 起步验证项与 MuMu 阶段风险
-10. [09-task-board-design.md](./09-task-board-design.md) — 任务方案、主任务模式、固定配置页与任务状态设计
-11. [10-chaos-mode-migration-ledger.md](./10-chaos-mode-migration-ledger.md) — 混沌模式迁移台账与剩余工作
-12. [11-region-slices-and-event-bus.md](./11-region-slices-and-event-bus.md) — 区域切片、事件总线和统一动作仲裁方案
-13. [12-design-errors-and-guardrails.md](./12-design-errors-and-guardrails.md) — 已犯设计错误、C# 对象化修正和防复发清单
+### 识别与交互
 
-## 关键结论
+- 支持 Windows Graphics Capture、PrintWindow 和 BitBlt 抓帧，并根据运行环境自动选择可用方式。
+- 使用 ONNX OCR、OpenCvSharp 模板匹配和区域识别理解画面。
+- 支持后台窗口消息输入和前台键鼠输入，点击前会结合当前画面确认目标。
+- 共享每个会话的抓帧循环，任务判断和界面预览使用同一份带序号的画面。
 
-- **统一目标模型**：核心库只认识 `TargetBinding`、`ITargetSession`、`IFrameSource` 和 `IInputSink`，不知道 `hwnd`、MuMu 实例索引或 Android KeyCode。
-- **Windows 先落地**：第一阶段实现 Windows 目标，验证完整自动化链路和调试体验；该阶段不依赖 MuMu 原生 IPC。
-- **MuMu 后接入**：第二阶段新增 MuMu 目标提供者，优先使用官方原生 IPC，ADB 作为兼容性兜底。
-- **目标传输与 UI 配置分离**：`TargetKind` 表示 Windows/MuMu，`UiProfile` 表示 Windows PC/Android 移动端页面布局。共享业务规则，但页面识别、区域坐标和模板按 UI 配置分组。
-- **单会话单操作序列**：同一目标同一时刻只允许一个业务任务操作。多个任务模块必须由 `SessionTaskCoordinator` 串行调度，禁止并发点击同一窗口或设备。
-- **任务方案显式化**：每个会话在配置中声明一个主任务模式和有序辅助任务，主任务模式互斥，任务板块只负责方案、配置和状态。
-- **共享帧源**：每个会话只有一个抓帧循环，任务和 GUI 预览订阅同一个带序号的帧，不为预览额外重复抓帧。
-- **OCR 分阶段**：第一阶段复用已有 ONNX OCR 模型并放在 `IOcrEngine` 后面，先完成 C# 链路迁移；自训练模型作为后续独立工作线，不阻塞第一阶段。
-- **核心库与业务层分离**：`Automation.Core` 不包含卡厄思梦境业务词汇；`Kes.Tasks` 只放游戏规则；`Kes.Layout.WindowsPc` 和 `Kes.Layout.AndroidMobile` 放不同客户端的页面配置。
-- **配置以稳定 ID 为主键**：持久化键使用稳定英文 ID，显示中文名称；旧 Python 中文配置 key 通过迁移工具或别名映射兼容。
+### 开发测试
 
-## 阶段验收
+- 查看 1:1 游戏画面，读取坐标并保存截图。
+- 框选区域进行 OCR、模板查找和裁剪预览。
+- 记录消费者收到的页面样本、OCR 文本和识别信息，便于复现问题。
+- 查看会话日志、任务状态、当前动作和性能信息。
 
-### 第一阶段：Windows 目标
+## 运行环境
 
-1. 能发现、绑定并重新关联 Windows 游戏窗口。
-2. 能通过 WGC/BitBlt 抓帧，通过 PostMessage/SendInput 输入。
-3. 一个会话的截图、OCR、模板匹配、决策和点击链路可稳定运行。
-4. 同一进程内多个 Windows 会话可以独立运行，且不会发生跨会话误操作。
-5. 配置修改后无需重启任务即可在下一轮决策中生效。
+- Windows 10/11 x64
+- .NET 9 SDK（仓库通过 `global.json` 固定 SDK 版本）
+- 16:9 比例的游戏画面
 
-### 第二阶段：MuMu 目标
+后台抓帧和后台输入能力取决于 Windows 版本、游戏显示模式和运行权限。程序会在启动和运行过程中报告实际使用的抓帧方式及失败原因。
 
-1. 确认 MuMu 原生 IPC 函数签名、会话建立方式和版本兼容范围。
-2. 验证后台保活开启后，抓到的仍是实际游戏画面。
-3. 验证多实例并发截图/输入的性能、稳定性和资源上限。
-4. 验证移动端客户端对触摸、滑动和按键事件的响应。
-5. 确认 PC 与 Android 客户端的 UI 差异，完成对应的 `UiProfile` 配置。
+## 快速开始
+
+1. 启动游戏并进入需要自动化的界面。
+2. 打开终端，进入项目目录。
+3. 运行启动脚本：
+
+```powershell
+.\run-gui.cmd
+```
+
+也可以直接使用 .NET CLI：
+
+```powershell
+dotnet restore
+dotnet run --project Kes.Gui\Kes.Gui.csproj
+```
+
+程序启动后，选择游戏窗口，为窗口配置或选择一个任务方案，然后启动任务。
+
+## 项目结构
+
+| 目录 | 说明 |
+|---|---|
+| `Automation.Core` | 平台无关的目标、会话、抓帧、输入、任务和配置契约 |
+| `Automation.Targets.Windows` | Windows 窗口发现、抓帧与输入实现 |
+| `Automation.Vision.Onnx` | ONNX OCR 与视觉识别能力 |
+| `Kes.Tasks` | 卡厄思梦境任务、页面判断与业务配置 |
+| `Kes.Gui` | WPF 桌面界面、任务方案和开发测试工具 |
+| `Kes.Layout.WindowsPc` | Windows PC 客户端页面布局与识别配置 |
+| `Kes.Layout.AndroidMobile` | 移动端页面布局资料与后续兼容配置 |
+| `Automation.Core.Tests` | 纯逻辑、页面路由与回归测试 |
+
+## 设计文档
+
+- [00-overview.md](./00-overview.md)：项目目标、能力边界与阶段范围
+- [01-architecture.md](./01-architecture.md)：整体分层与核心模型
+- [02-instance-and-window-management.md](./02-instance-and-window-management.md)：窗口发现、绑定与会话生命周期
+- [03-capture-and-input-strategy.md](./03-capture-and-input-strategy.md)：抓帧和输入策略
+- [04-config-system-and-hot-reload.md](./04-config-system-and-hot-reload.md)：配置与热更新
+- [05-task-framework-and-vision.md](./05-task-framework-and-vision.md)：任务运行时与视觉层
+- [06-gui-design.md](./06-gui-design.md)：桌面界面与多会话监视
+- [09-task-board-design.md](./09-task-board-design.md)：任务方案与状态展示
+- [11-region-slices-and-event-bus.md](./11-region-slices-and-event-bus.md)：区域切片与帧派发
+- [12-design-errors-and-guardrails.md](./12-design-errors-and-guardrails.md)：设计边界与防复发约定
+- [14-ocr-robustness-proposals.md](./14-ocr-robustness-proposals.md)：OCR 稳定性改进
+
+## 开发与验证
+
+```powershell
+dotnet build AutomationPlatform.slnx
+dotnet test Automation.Core.Tests\Automation.Core.Tests.csproj
+```
+
+界面启动脚本会先构建整个解决方案，再运行 WPF 客户端。
+
+## 使用须知
+
+本项目用于减少重复操作，使用时请遵守游戏服务条款和所在地法律法规。自动化行为存在账号限制、页面变化和运行环境差异等风险，请自行评估并承担使用后果。
+
+当前自动化流程基于截图与输入模拟，不修改游戏文件或数据。遇到无法识别的页面时，建议保留开发测试样本和日志，以便定位具体流程。

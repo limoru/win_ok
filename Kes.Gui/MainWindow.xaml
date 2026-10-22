@@ -699,11 +699,11 @@
                                                            Style="{StaticResource CaptionText}"
                                                            VerticalAlignment="Center" />
                                             </StackPanel>
-                                            <TextBlock Text="点击详细设置，按 Python 版相同选项配置任务内容。"
+                                            <TextBlock Text="按任务方案配置主战员、卡牌、路线、装备与赛季选项。"
                                                        Margin="0,4,0,0"
                                                        Style="{StaticResource SecondaryText}"
                                                        TextWrapping="Wrap" />
-                                            <TextBlock Text="任务执行模块尚未迁移，当前设置不会伪造自动化行为。"
+                                            <TextBlock Text="任务可使用已保存方案运行；当前步骤和状态会同步到会话面板。"
                                                        Margin="0,3,0,0"
                                                        Style="{StaticResource CaptionText}"
                                                        TextWrapping="Wrap" />
@@ -715,7 +715,7 @@
                                                     Background="#0D000000"
                                                     CornerRadius="4"
                                                     VerticalAlignment="Center">
-                                                <TextBlock Text="待实现"
+                                                <TextBlock Text="可用"
                                                            FontSize="11"
                                                            Foreground="{StaticResource TextSecondaryBrush}" />
                                             </Border>
@@ -1632,7 +1632,7 @@
 
                                 <StackPanel Grid.Row="0">
                                     <TextBlock Text="关于" Style="{StaticResource PageTitleText}" />
-                                    <TextBlock Text="Windows 优先的自动化平台原型。"
+                                    <TextBlock Text="基于图像识别的《卡厄思梦境》Windows 自动化工具。"
                                                Style="{StaticResource SecondaryText}"
                                                Margin="0,4,0,0" />
                                 </StackPanel>
@@ -1659,23 +1659,26 @@
                                             <TextBlock Text="Kes Automation Platform"
                                                        FontSize="20"
                                                        FontWeight="SemiBold" />
-                                            <TextBlock Text="v0.1.0 · Windows PC profile"
+                                            <TextBlock Text="v0.1.0 · Windows PC"
                                                        Style="{StaticResource SecondaryText}"
                                                        Margin="0,4,0,0" />
-                                            <TextBlock Text="核心运行时、Windows 目标发现、多会话模型和 Fluent 风格桌面界面已经接入。后续可沿用同一架构扩展模拟器目标、抓帧、输入与任务系统。"
+                                            <TextBlock Text="Kes Automation 通过窗口抓帧、OCR 与模板匹配识别当前画面，再按任务方案执行键鼠操作。每个游戏窗口都可以独立分配任务方案；开发测试工具提供截图、坐标、局部识别和样本记录，方便定位流程问题。"
                                                        Style="{StaticResource BodyText}"
                                                        TextWrapping="Wrap"
                                                        MaxWidth="780"
                                                        Margin="0,14,0,0" />
                                             <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
                                                 <Border Padding="9,4" Background="#120067C0" CornerRadius="5" Margin="0,0,8,0">
-                                                    <TextBlock Text=".NET 9" FontSize="11" Foreground="{StaticResource AccentBrush}" />
+                                                    <TextBlock Text="图像识别" FontSize="11" Foreground="{StaticResource AccentBrush}" />
                                                 </Border>
                                                 <Border Padding="9,4" Background="#120067C0" CornerRadius="5" Margin="0,0,8,0">
-                                                    <TextBlock Text="WPF" FontSize="11" Foreground="{StaticResource AccentBrush}" />
+                                                    <TextBlock Text="后台抓帧" FontSize="11" Foreground="{StaticResource AccentBrush}" />
+                                                </Border>
+                                                <Border Padding="9,4" Background="#120067C0" CornerRadius="5" Margin="0,0,8,0">
+                                                    <TextBlock Text="多窗口任务" FontSize="11" Foreground="{StaticResource AccentBrush}" />
                                                 </Border>
                                                 <Border Padding="9,4" Background="#120067C0" CornerRadius="5">
-                                                    <TextBlock Text="Windows target discovery" FontSize="11" Foreground="{StaticResource AccentBrush}" />
+                                                    <TextBlock Text="任务方案" FontSize="11" Foreground="{StaticResource AccentBrush}" />
                                                 </Border>
                                             </StackPanel>
                                         </StackPanel>

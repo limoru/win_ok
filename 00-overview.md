@@ -2,7 +2,7 @@
 
 ## 1. 背景
 
-现有卡厄思梦境自动化工具使用 Python 和 ok-script，主要面向单个 Windows 游戏窗口。重写为 C# 的主要目标不是简单更换语言，而是建立一套可同时容纳 Windows 游戏窗口和 Android 模拟器的统一自动化运行时。
+Kes Automation 是面向《卡厄思梦境》Windows 客户端的图像识别自动化工具。项目通过窗口抓帧、OCR、模板匹配和键鼠输入完成游戏中的重复性流程，并为窗口、会话、视觉识别和任务执行建立清晰边界。
 
 Windows 客户端和 MuMu 模拟器承担不同角色：
 
@@ -12,9 +12,9 @@ Windows 客户端和 MuMu 模拟器承担不同角色：
 
 因此，架构必须先抽象出与传输方式无关的 `ITargetSession`，再分别实现 Windows 和 MuMu 目标提供者。
 
-### 1.1 C# 可行性与 Windows 底层调用边界
+### 1.1 Windows 能力与调用边界
 
-C#/.NET 重写可行。Windows 下可以通过 P/Invoke、COM 和 WinRT 直接访问本阶段需要的主要能力：
+项目使用 C#/.NET 构建。Windows 下可以通过 P/Invoke、COM 和 WinRT 访问自动化所需的主要能力：
 
 - 窗口枚举、窗口消息、键盘鼠标输入和 DPI 相关 Win32 API。
 - `Windows.Graphics.Capture`、`PrintWindow` 和 BitBlt 等抓帧路径。
@@ -75,7 +75,7 @@ UiProfile:  WindowsPc | AndroidMobile
 
 ### 4.5 分阶段 OCR
 
-第一阶段复用现有 PP-OCRv5 ONNX 模型，并通过 `IOcrEngine` 隔离模型实现；自训练游戏专用模型作为后续独立里程碑，不阻塞 C# 核心链路迁移。
+项目使用 PP-OCRv5 ONNX 模型，并通过 `IOcrEngine` 隔离模型实现；游戏专用模型可以独立替换，不影响任务运行时和页面判断。
 
 ### 4.6 配置热更新
 
@@ -91,7 +91,7 @@ UiProfile:  WindowsPc | AndroidMobile
 | MuMu 目标 | 官方原生 IPC，ADB 兜底 | 第二阶段接入，先完成最小 Demo 验证 |
 | 图像处理 | OpenCvSharp4 | 模板匹配、颜色和基础图像处理 |
 | OCR | ONNX Runtime | 第一阶段复用现有模型，后续支持替换自训练模型 |
-| 配置 | `System.Text.Json` | 原子写入、版本迁移和稳定 ID |
+| 配置 | `System.Text.Json` | 原子写入、版本兼容和稳定 ID |
 | 测试 | xUnit/NUnit + 假会话 | 使用假帧序列和假输入实现纯逻辑测试 |
 
 ## 6. 文档结构
@@ -99,8 +99,11 @@ UiProfile:  WindowsPc | AndroidMobile
 - `01-architecture.md`：整体分层、项目结构、目标模型和并发模型。
 - `02-instance-and-window-management.md`：目标发现、绑定、会话生命周期和多开管理。
 - `03-capture-and-input-strategy.md`：Windows 与 MuMu 的抓帧和输入实现。
-- `04-config-system-and-hot-reload.md`：配置来源、会话配置、热更新和迁移。
+- `04-config-system-and-hot-reload.md`：配置来源、会话配置与热更新。
 - `05-task-framework-and-vision.md`：任务运行时、帧所有权和视觉层。
 - `06-gui-design.md`：多会话 GUI 和共享预览帧。
-- `07-migration-notes-from-python.md`：Python 代码迁移对照和当前工作量。
 - `08-open-questions-and-risks.md`：阶段验证项和风险清单。
+- `09-task-board-design.md`：任务方案、配置与运行状态。
+- `11-region-slices-and-event-bus.md`：区域切片与帧派发。
+- `12-design-errors-and-guardrails.md`：设计边界与防复发约定。
+- `14-ocr-robustness-proposals.md`：OCR 稳定性与识别策略。

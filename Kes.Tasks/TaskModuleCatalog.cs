@@ -12,7 +12,7 @@ public sealed class TaskModuleCatalog : ITaskModuleCatalog
         new TaskModuleDescriptor(
             "ChaosMode",
             "自动卡厄思模式",
-            "卡厄思梦境正常流程可运行；刻印、面具和赛季专属逻辑暂缓。",
+            "按方案执行探索、事件、战斗衔接、奖励、商店、休息、装备与赛季专属流程。",
             TaskModuleKind.PrimaryMode,
             TaskModuleAvailability.Available,
             [UiProfile.WindowsPc],

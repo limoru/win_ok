@@ -23,7 +23,7 @@ public static class ChaosModeConfigSchema
     public static TaskConfigSchema Instance { get; } = new(
         "ChaosMode",
         "自动卡厄思模式",
-        "配置基于 Python 版 ChaosMode 整理；正常流程可运行，赛季专属功能暂缓。",
+        "按任务方案配置主战员、卡牌、路线、装备与赛季选项；修改会在后续决策中生效。",
         [
             new TaskConfigGroupDescriptor(
                 SeasonSelectorGroupName,
