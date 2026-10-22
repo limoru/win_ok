@@ -104,6 +104,56 @@ public sealed class FrameRouterTests
     }
 
     [Fact]
+    public void ResolveStopsEvaluatingRoutesAfterFirstMatch()
+    {
+        var lowerEvaluated = false;
+        var router = new FrameRouter<string>(
+        [
+            new FrameRoute<string>(
+                "high",
+                0,
+                frame => frame == "route",
+                (_, _) => ValueTask.FromResult(true)),
+            new FrameRoute<string>(
+                "low",
+                10,
+                _ =>
+                {
+                    lowerEvaluated = true;
+                    return true;
+                },
+                (_, _) => ValueTask.FromResult(true))
+        ]);
+
+        var route = router.Resolve("route");
+
+        Assert.Equal("high", route?.Id);
+        Assert.False(lowerEvaluated);
+    }
+
+    [Fact]
+    public void PriorityOverlayCanWinWithoutChangingNormalPriorityOrder()
+    {
+        var router = new FrameRouter<string>(
+        [
+            new FrameRoute<string>(
+                "normal",
+                0,
+                frame => frame == "route",
+                (_, _) => ValueTask.FromResult(true)),
+            new FrameRoute<string>(
+                "overlay",
+                10,
+                frame => frame == "route",
+                (_, _) => ValueTask.FromResult(true),
+                IsPriorityOverlay: true)
+        ]);
+
+        Assert.Equal("normal", router.Resolve("route")?.Id);
+        Assert.Equal("overlay", router.ResolvePriorityOverlay("route")?.Id);
+    }
+
+    [Fact]
     public async Task DispatchReturnsFalseWhenNoRouteMatches()
     {
         var invoked = false;

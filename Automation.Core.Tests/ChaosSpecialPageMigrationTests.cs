@@ -120,6 +120,66 @@ public sealed class ChaosSpecialPageMigrationTests
     }
 
     [Fact]
+    public async Task BattleEventTransitionDoesNotReselectEventOrRepeatStartAttack()
+    {
+        var input = new RecordingInputSink();
+        var matcher = new BattleEventSequenceFeatureMatcher();
+        var ocr = new SequencedOcrProvider(
+            CreateEventBattleOcr("普通奖励", 0.800),
+            CreateEventBattleOcr("变更后的事件选项", 0.730),
+            CreateOcr(LineAt("3/10", 0.512, 0.969)),
+            CreateEventBattleOcr("战斗事件残留帧", 0.730),
+            CreateOcr(LineAt("3/10", 0.512, 0.969)));
+        var context = CreateContext(
+            CreateFrame(),
+            CreateOcr(LineAt("占位", 0.5, 0.5)),
+            input,
+            matcher,
+            ocrProvider: ocr,
+            frameSource: new SequencedFrameSource(CreateFrame()));
+        var task = new ChaosModeTask();
+
+        for (var index = 0; index < 5; index++)
+        {
+            Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        }
+
+        Assert.Equal(2, input.Clicks.Count);
+        Assert.InRange(input.Clicks[0].X, 0.947, 0.949);
+        Assert.InRange(input.Clicks[0].Y, 0.868, 0.870);
+        Assert.InRange(input.Clicks[1].X, 0.462, 0.463);
+        Assert.InRange(input.Clicks[1].Y, 0.816, 0.817);
+        Assert.Equal(BattleEventPhase.StartAttackRequested, task.RunState.BattleEvent.Phase);
+    }
+
+    [Fact]
+    public void BattleEventFlowTimesOutAndOnlySendsStartAttackOnce()
+    {
+        var startedAt = new DateTimeOffset(2026, 10, 17, 15, 0, 0, TimeSpan.Zero);
+        var flow = new BattleEventFlow(TimeSpan.FromSeconds(2));
+
+        flow.MarkEventSelected(startedAt);
+
+        Assert.Equal(
+            BattleEventPageDecision.WaitForTransition,
+            flow.ObserveEventPage(startedAt.AddSeconds(1)));
+        Assert.True(flow.TryBeginStartAttack(startedAt.AddSeconds(1)));
+        Assert.False(flow.TryBeginStartAttack(startedAt.AddSeconds(1.5)));
+        Assert.Equal(BattleEventPhase.StartAttackRequested, flow.Phase);
+        Assert.Equal(
+            BattleEventPageDecision.RetryEventSelection,
+            flow.ObserveEventPage(startedAt.AddSeconds(3)));
+        Assert.Equal(BattleEventPhase.Idle, flow.Phase);
+
+        flow.MarkEventSelected(startedAt.AddSeconds(4));
+        flow.Complete();
+        Assert.Equal(BattleEventPhase.Idle, flow.Phase);
+        Assert.Equal(
+            BattleEventPageDecision.ProcessNormally,
+            flow.ObserveEventPage(startedAt.AddSeconds(5)));
+    }
+
+    [Fact]
     public async Task DiscoverySelectClicksFirstOptionMeetingThreshold()
     {
         var input = new RecordingInputSink();
@@ -177,15 +237,17 @@ public sealed class ChaosSpecialPageMigrationTests
         IInputSink input,
         IFeatureMatcher? featureMatcher = null,
         IReadOnlyDictionary<string, object>? config = null,
-        ITaskStopRequestSink? stopRequestSink = null)
+        ITaskStopRequestSink? stopRequestSink = null,
+        IOcrProvider? ocrProvider = null,
+        IFrameSource? frameSource = null)
         => new(
             "special-page-test",
             UiProfile.WindowsPc,
             TargetCapabilities.BackgroundCapture | TargetCapabilities.BackgroundInput,
-            new StaticFrameSource(new TestBgraFrameLease(frame)),
+            frameSource ?? new StaticFrameSource(new TestBgraFrameLease(frame)),
             input,
             taskConfig: config,
-            ocr: new StaticOcrProvider(ocr),
+            ocr: ocrProvider ?? new StaticOcrProvider(ocr),
             taskConfigSchema: ChaosModeConfigSchema.Instance,
             featureMatcher: featureMatcher ?? new StaticFeatureMatcher(
                 new Dictionary<string, IReadOnlyList<FeatureBox>>()),
@@ -193,6 +255,11 @@ public sealed class ChaosSpecialPageMigrationTests
 
     private static OcrFrameResult CreateOcr(params OcrTextLine[] lines)
         => new(string.Join(" ", lines.Select(line => line.Text)), 0.99, lines);
+
+    private static OcrFrameResult CreateEventBattleOcr(string description, double descriptionY)
+        => CreateOcr(
+            LineAt("事件任务", 0.500, 0.100),
+            LineAt(description, 0.500, descriptionY, width: 420));
 
     private static OcrTextLine LineAt(
         string text,
@@ -242,8 +309,25 @@ public sealed class ChaosSpecialPageMigrationTests
             => ValueTask.FromResult(frame);
     }
 
-    private sealed class TestBgraFrameLease(BgraFrame frame) : FrameLease(
-        1,
+    private sealed class SequencedFrameSource(BgraFrame frame) : IFrameSource
+    {
+        private long _sequence;
+
+        public ValueTask<FrameLease> GetLatestAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<FrameLease>(Next());
+
+        public ValueTask<FrameLease> WaitNextAsync(
+            long afterSequence,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<FrameLease>(Next());
+
+        private TestBgraFrameLease Next()
+            => new(frame, Interlocked.Increment(ref _sequence));
+    }
+
+    private sealed class TestBgraFrameLease(BgraFrame frame, long sequence = 1) : FrameLease(
+        sequence,
         DateTimeOffset.Now,
         frame.Width,
         frame.Height,
@@ -260,6 +344,44 @@ public sealed class ChaosSpecialPageMigrationTests
     private sealed class StaticOcrProvider(OcrFrameResult result) : IOcrProvider
     {
         public OcrFrameResult Recognize(BgraFrame frame) => result;
+    }
+
+    private sealed class SequencedOcrProvider(params OcrFrameResult[] results) : IOcrProvider
+    {
+        private int _index;
+
+        public OcrFrameResult Recognize(BgraFrame frame)
+        {
+            var index = Math.Min(_index, results.Length - 1);
+            _index++;
+            return results[index];
+        }
+    }
+
+    private sealed class BattleEventSequenceFeatureMatcher : IFeatureMatcher
+    {
+        private int _eventOptionCalls;
+
+        public IReadOnlyList<FeatureBox> Find(
+            BgraFrame frame,
+            string featureName,
+            FeatureSearchRegion? region = null,
+            double? threshold = null)
+        {
+            return featureName switch
+            {
+                "event1" => [new FeatureBox(
+                    "event1",
+                    780,
+                    _eventOptionCalls++ == 0 ? 840 : 770,
+                    40,
+                    20,
+                    0.98)],
+                "attack_event" => [new FeatureBox("attack_event", 1482, 763, 70, 38, 0.99)],
+                "start_attack_event" => [new FeatureBox("start_attack_event", 700, 720, 80, 30, 0.98)],
+                _ => []
+            };
+        }
     }
 
     private sealed class StaticFeatureMatcher(

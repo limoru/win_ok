@@ -5,16 +5,20 @@ namespace Automation.Core.Arbitration;
 public enum PageActionDecisionKind
 {
     Execute,
+    Recover,
     SuppressDuplicate
 }
 
 public readonly record struct PageActionDecision(
     PageActionDecisionKind Kind,
     string Reason,
-    bool IsRetry = false)
+    int RecoveryCount = 0)
 {
-    public static PageActionDecision Execute(string reason, bool isRetry = false)
-        => new(PageActionDecisionKind.Execute, reason, isRetry);
+    public static PageActionDecision Execute(string reason)
+        => new(PageActionDecisionKind.Execute, reason);
+
+    public static PageActionDecision Recover(string reason, int recoveryCount)
+        => new(PageActionDecisionKind.Recover, reason, recoveryCount);
 
     public static PageActionDecision Suppress(string reason)
         => new(PageActionDecisionKind.SuppressDuplicate, reason);
@@ -23,33 +27,82 @@ public readonly record struct PageActionDecision(
 public sealed class ActionArbiter
 {
     private ConfirmationSession? _confirmation;
-    private PageActionSession? _pageAction;
+    private readonly Dictionary<string, PageActionSession> _pageActions =
+        new(StringComparer.Ordinal);
     private PageObservation? _previousObservation;
     private long _lastActionFrameSequence = -1;
 
-    public PageActionDecision TryBeginPageAction(string key, PageObservation observation)
+    public PageActionDecision TryBeginPageAction(
+        string key,
+        PageObservation observation,
+        int? retryAfterFrames = null,
+        int maxAttempts = 3,
+        string? sourceRouteId = null,
+        int recoveryAfterFrames = 3)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         ArgumentNullException.ThrowIfNull(observation);
+
+        if (retryAfterFrames is < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(retryAfterFrames));
+        }
+
+        if (maxAttempts < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxAttempts));
+        }
+
+        if (recoveryAfterFrames < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(recoveryAfterFrames));
+        }
 
         if (_confirmation?.IsActive == true)
         {
             return PageActionDecision.Suppress("中心确认流程正在接管当前帧，暂不执行页面动作。");
         }
 
-        if (_pageAction is not null)
+        if (_pageActions.TryGetValue(key, out var pageAction))
         {
-            if (string.Equals(_pageAction.ActionKey, key, StringComparison.Ordinal))
+            if (retryAfterFrames is { } retryFrames && pageAction.CanRetryAfter(
+                    observation.FrameSequence,
+                    retryFrames,
+                    maxAttempts))
             {
-                return _pageAction.TryConsumeRetry(observation)
-                    ? PageActionDecision.Execute("允许在超时后重试一次同一页面动作。", isRetry: true)
-                    : PageActionDecision.Suppress("当前路由动作已经发送，等待路由变化或确认弹窗。");
+                _previousObservation = observation;
+                return PageActionDecision.Execute(
+                    $"当前页面动作保持不变，已等待 {retryFrames} 帧，允许第 {pageAction.AttemptCount + 1}/{maxAttempts} 次尝试。");
             }
 
-            _pageAction = null;
+            if (pageAction.HasReachedAttemptLimit(maxAttempts))
+            {
+                if (retryAfterFrames is not null
+                    && pageAction.CanRecoverAfter(
+                        observation.FrameSequence,
+                        recoveryAfterFrames))
+                {
+                    pageAction.MarkRecoveryDecision(observation.FrameSequence);
+                    _previousObservation = observation;
+                    return PageActionDecision.Recover(
+                        $"页面动作达到 {pageAction.AttemptCount}/{maxAttempts} 次快速重试上限，冷却 {recoveryAfterFrames} 帧后执行第 {pageAction.RecoveryCount} 次自动恢复。",
+                        pageAction.RecoveryCount);
+                }
+
+                return PageActionDecision.Suppress(
+                    $"当前页面动作已达到 {pageAction.AttemptCount}/{maxAttempts} 次快速重试上限，等待自动恢复冷却。");
+            }
+
+            return PageActionDecision.Suppress(retryAfterFrames is { } configuredRetryFrames
+                ? $"当前页面动作已经发送，等待页面阶段变化；重试至少需要 {configuredRetryFrames} 帧。"
+                : "当前页面动作已经发送；该语义路由未声明自动重试，等待页面阶段变化。");
         }
 
-        _pageAction = new PageActionSession(observation.SessionId, key, observation);
+        _pageActions[key] = new PageActionSession(
+            observation.SessionId,
+            key,
+            observation,
+            sourceRouteId);
         _previousObservation = observation;
         return PageActionDecision.Execute("允许执行新的页面动作。");
     }
@@ -59,13 +112,19 @@ public sealed class ActionArbiter
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         ArgumentNullException.ThrowIfNull(observation);
 
-        if (_pageAction is null
-            || !string.Equals(_pageAction.ActionKey, key, StringComparison.Ordinal))
+        if (!_pageActions.TryGetValue(key, out var pageAction))
         {
             return;
         }
 
-        _pageAction.MarkCommandSent(observation);
+        pageAction.MarkCommandSent(observation.FrameSequence);
+        _previousObservation = observation;
+        foreach (var otherKey in _pageActions.Keys
+                     .Where(otherKey => !string.Equals(otherKey, key, StringComparison.Ordinal))
+                     .ToArray())
+        {
+            _pageActions.Remove(otherKey);
+        }
     }
 
     public void CancelPageAction(string key, PageObservation observation)
@@ -73,14 +132,13 @@ public sealed class ActionArbiter
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         ArgumentNullException.ThrowIfNull(observation);
 
-        if (_pageAction is null
-            || !string.Equals(_pageAction.ActionKey, key, StringComparison.Ordinal)
-            || !_pageAction.CanCancelAfterUnhandledAttempt)
+        if (!_pageActions.TryGetValue(key, out var pageAction)
+            || !pageAction.CanCancelAfterUnhandledAttempt)
         {
             return;
         }
 
-        _pageAction = null;
+        _pageActions.Remove(key);
     }
 
     public ActionDecision SubmitSkip(
@@ -121,23 +179,28 @@ public sealed class ActionArbiter
         if (_confirmation is not null)
         {
             var confirmationDecision = _confirmation.ObservePage(observation);
+            if (confirmationDecision.Kind is ActionDecisionKind.Completed or ActionDecisionKind.Failed)
+            {
+                _pageActions.Clear();
+            }
             ResetCompletedSession(confirmationDecision, observation);
             return ToActionDecision(confirmationDecision);
         }
 
-        if (_pageAction is not null)
+        RemoveActionsForRoutesNoLongerObserved(observation, currentActionKey);
+
+        if (currentActionKey is not null
+            && _pageActions.TryGetValue(currentActionKey, out var pageAction))
         {
-            switch (_pageAction.Observe(observation, currentActionKey))
+            switch (pageAction.Observe(observation, currentActionKey))
             {
                 case PageActionObservationKind.SourcePageStillPresent:
                     return ActionDecision.SuppressDuplicate(
                         "当前路由动作已经执行，路由未离开前禁止重复执行。");
                 case PageActionObservationKind.ConfirmationObserved:
                     return ActionDecision.None();
-                case PageActionObservationKind.RetryAvailable:
-                    return ActionDecision.None();
                 case PageActionObservationKind.Completed:
-                    _pageAction = null;
+                    _pageActions.Remove(currentActionKey);
                     _previousObservation = observation;
                     return ActionDecision.None();
                 default:
@@ -151,6 +214,30 @@ public sealed class ActionArbiter
         }
 
         return ActionDecision.None();
+    }
+
+    private void RemoveActionsForRoutesNoLongerObserved(
+        PageObservation observation,
+        string? currentActionKey)
+    {
+        if (observation.RouteIds.Count == 0)
+        {
+            return;
+        }
+
+        var observedRouteIds = observation.RouteIds.ToHashSet(StringComparer.Ordinal);
+        foreach (var entry in _pageActions.ToArray())
+        {
+            if (string.Equals(entry.Key, currentActionKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!observedRouteIds.Contains(entry.Value.SourceRouteId))
+            {
+                _pageActions.Remove(entry.Key);
+            }
+        }
     }
 
     public ActionDecision ObserveConfirmation(PageObservation observation)

@@ -1,4 +1,4 @@
-﻿namespace Automation.Core.Dispatching;
+namespace Automation.Core.Dispatching;
 
 public sealed class FrameRouter<TFrame>
 {
@@ -26,8 +26,33 @@ public sealed class FrameRouter<TFrame>
         }
     }
 
+    public IReadOnlyList<FrameRoute<TFrame>> Routes => _routes;
+
     public FrameRoute<TFrame>? Resolve(TFrame frame)
-        => ResolveCandidates(frame).FirstOrDefault();
+    {
+        foreach (var route in _routes)
+        {
+            if (route.Matches(frame))
+            {
+                return route;
+            }
+        }
+
+        return null;
+    }
+
+    public FrameRoute<TFrame>? ResolvePriorityOverlay(TFrame frame)
+    {
+        foreach (var route in _routes)
+        {
+            if (route.IsPriorityOverlay && route.Matches(frame))
+            {
+                return route;
+            }
+        }
+
+        return null;
+    }
 
     public FrameRoute<TFrame>? FindById(string routeId)
     {

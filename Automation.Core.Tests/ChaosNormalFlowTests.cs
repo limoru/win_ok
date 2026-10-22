@@ -49,11 +49,42 @@ public sealed class ChaosNormalFlowTests
     }
 
     [Fact]
+    public void EquipmentDecisionRejectsSecondLegendaryForSameMember()
+    {
+        var priority = new[] { "目标武器" };
+        var legendary = new ChaosEquipmentCandidate(
+            "传说武器", "传说武器", "攻击力", "", 0, priority, null, "传说", 0, 0);
+
+        var denied = ChaosEquipmentLogic.DecideInstall(
+            "普通武器",
+            "普通",
+            legendary,
+            ["传说", "史诗"]);
+        var allowed = ChaosEquipmentLogic.DecideInstall(
+            "普通武器",
+            "普通",
+            legendary,
+            ["史诗", ""]);
+
+        Assert.False(denied.ShouldInstall);
+        Assert.Contains("其他装备位", denied.Reason, StringComparison.Ordinal);
+        Assert.True(allowed.ShouldInstall);
+    }
+
+    [Fact]
     public void EquipmentCatalogMatchesOcrNameWithoutPunctuation()
     {
         var slot = ChaosEquipmentCatalog.Default.FindSlot("W52 多巴胺注射器");
 
         Assert.Equal(0, slot);
+    }
+
+    [Fact]
+    public void EquipmentCatalogRejectsSingleCharacterOcrNoise()
+    {
+        var slot = ChaosEquipmentCatalog.Default.FindSlot("5");
+
+        Assert.Null(slot);
     }
 
     [Fact]
@@ -88,6 +119,101 @@ public sealed class ChaosNormalFlowTests
         Assert.InRange(click.Y, 0.559, 0.562);
         Assert.Equal("事件", task.RunState.NodeType);
         Assert.True(task.RunState.FlashOrRest);
+    }
+
+    [Fact]
+    public async Task RouteSelectionHonorsShopOnlyWhenItAppearsInPriorityList()
+    {
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["position"] = [new FeatureBox("position", 600, 550, 20, 20, 0.99)],
+                ["safezone"] = [new FeatureBox("safezone", 1200, 300, 20, 20, 0.98)],
+                ["enemy"] = [new FeatureBox("enemy", 1200, 500, 20, 20, 0.97)],
+                ["shop"] = [new FeatureBox("shop", 1200, 500, 20, 20, 0.96)]
+            });
+
+        var defaultTask = new ChaosModeTask();
+        var defaultContext = CreateContext(
+            CreateFrame(),
+            new OcrFrameResult(string.Empty, 0, []),
+            new RecordingInputSink(),
+            new Dictionary<string, object>
+            {
+                [ChaosModeConfig.FirstLayerRoutePriorityKey] = new[] { "休息", "小怪" }
+            },
+            matcher);
+        await defaultTask.RunOnceAsync(defaultContext, CancellationToken.None);
+        Assert.Equal("小怪", defaultTask.RunState.NodeType);
+
+        var listedTask = new ChaosModeTask();
+        var listedContext = CreateContext(
+            CreateFrame(),
+            new OcrFrameResult(string.Empty, 0, []),
+            new RecordingInputSink(),
+            new Dictionary<string, object>
+            {
+                [ChaosModeConfig.FirstLayerRoutePriorityKey] = new[] { "休息", "商店" }
+            },
+            matcher);
+        await listedTask.RunOnceAsync(listedContext, CancellationToken.None);
+        Assert.Equal("休息", listedTask.RunState.NodeType);
+    }
+
+    [Fact]
+    public async Task RouteSelectionPausesBeforeConfiguredBossLayer()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["position"] = [new FeatureBox("position", 600, 550, 20, 20, 0.99)]
+            });
+        var input = new RecordingInputSink();
+        var pauseSink = new RecordingPauseRequestSink();
+        var context = CreateContext(
+            frame,
+            new OcrFrameResult(string.Empty, 0, []),
+            input,
+            new Dictionary<string, object>
+            {
+                ["第几层boss前自动暂停"] = "1"
+            },
+            matcher,
+            pauseRequestSink: pauseSink);
+        var task = new ChaosModeTask();
+        task.RunState.PassFinalBossCount = 0;
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.True(handled);
+        Assert.Empty(input.Clicks);
+        var request = Assert.Single(pauseSink.Requests);
+        Assert.Contains("第1层", request, StringComparison.Ordinal);
+        Assert.True(task.RunState.ReachFinalBoss);
+        Assert.Equal(1, task.RunState.PauseRequestedBossLayer);
+
+        var resumedTask = new ChaosModeTask();
+        resumedTask.RunState.PauseRequestedBossLayer = 1;
+        var resumedInput = new RecordingInputSink();
+        var resumedContext = CreateContext(
+            CreateFrame(),
+            new OcrFrameResult(
+                "页面已恢复",
+                0.99,
+                [new OcrTextLine("页面已恢复", 0.99, new OcrTextRegion(700, 100, 180, 30))]),
+            resumedInput,
+            new Dictionary<string, object>
+            {
+                ["第几层boss前自动暂停"] = "1"
+            },
+            matcher,
+            pauseRequestSink: pauseSink);
+        Assert.True(await resumedTask.RunOnceAsync(resumedContext, CancellationToken.None));
+        Assert.Single(pauseSink.Requests);
+        var bossClick = Assert.Single(resumedInput.Clicks);
+        Assert.InRange(bossClick.X, 0.810, 0.820);
+        Assert.InRange(bossClick.Y, 0.487, 0.497);
     }
 
     [Fact]
@@ -150,7 +276,8 @@ public sealed class ChaosNormalFlowTests
             input,
             new Dictionary<string, object>
             {
-                ["闪光优先级"] = new[] { "第二张描述关键字" }
+                ["闪光优先级"] = new[] { "第二张描述关键字" },
+                ["首层刷特定闪光"] = true
             },
             matcher);
         var task = new ChaosModeTask();
@@ -161,8 +288,94 @@ public sealed class ChaosNormalFlowTests
         var click = Assert.Single(input.Clicks);
         Assert.InRange(click.X, 0.445, 0.448);
         Assert.InRange(click.Y, 0.180, 0.184);
+        Assert.True(task.RunState.GetSpecificFlash);
     }
 
+    [Fact]
+    public async Task FlashDescriptionContainingObtainDoesNotMatchChaosRewardClaim()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["attack"] = [new FeatureBox("attack", 200, 190, 20, 20, 0.96)],
+                ["skill"] = [new FeatureBox("skill", 600, 190, 20, 20, 0.97)]
+            });
+        var ocr = new OcrFrameResult(
+            "\u8BF7\u51B3\u5B9A\u95EA\u5149\u6548\u679C\u3002",
+            0.99,
+            [
+                new OcrTextLine("\u8BF7\u51B3\u5B9A\u95EA\u5149\u6548\u679C\u3002", 0.99, new OcrTextRegion(1400, 30, 100, 30)),
+                new OcrTextLine("\u653B\u51FB\u5361", 0.98, new OcrTextRegion(200, 160, 80, 20)),
+                new OcrTextLine("\u653B\u51FB", 0.98, new OcrTextRegion(210, 200, 60, 20)),
+                new OcrTextLine("\u7B2C\u4E00\u5F20\u63CF\u8FF0", 0.98, new OcrTextRegion(200, 340, 100, 20)),
+                new OcrTextLine("\u6280\u80FD\u5361", 0.99, new OcrTextRegion(600, 160, 80, 20)),
+                new OcrTextLine("\u6280\u80FD", 0.99, new OcrTextRegion(610, 200, 60, 20)),
+                new OcrTextLine("\u7B2C\u4E8C\u5F20\u63CF\u8FF0", 0.99, new OcrTextRegion(600, 340, 120, 20)),
+                new OcrTextLine("\u6839\u636E\u8D85\u51FA\u7684\u6CBB\u6108\u91CF\uFF0C\u83B7\u5F97", 0.98, new OcrTextRegion(653, 627, 297, 36))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            new Dictionary<string, object>
+            {
+                ["\u95EA\u5149\u4F18\u5148\u7EA7"] = new[] { "\u7B2C\u4E00\u5F20\u63CF\u8FF0" }
+            },
+            matcher);
+        var task = new ChaosModeTask();
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.True(handled);
+        Assert.Single(input.Clicks);
+        Assert.DoesNotContain(input.Clicks, click =>
+            click.X is >= 0.34 and <= 0.36
+            && click.Y is >= 0.70 and <= 0.72);
+    }
+
+    [Fact]
+    public async Task ViewOriginalFlashChoosesCardByFlashPriority()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["attack"] = [new FeatureBox("attack", 200, 190, 20, 20, 0.96)],
+                ["skill"] = [new FeatureBox("skill", 600, 190, 20, 20, 0.97)]
+            });
+        var ocr = new OcrFrameResult(
+            "查看原件 第二张描述关键字",
+            0.99,
+            [
+                new OcrTextLine("查看原件", 0.99, new OcrTextRegion(1400, 35, 100, 30)),
+                new OcrTextLine("攻击卡", 0.98, new OcrTextRegion(200, 160, 80, 20)),
+                new OcrTextLine("攻击", 0.98, new OcrTextRegion(210, 200, 60, 20)),
+                new OcrTextLine("第一张描述", 0.98, new OcrTextRegion(200, 340, 100, 20)),
+                new OcrTextLine("技能卡", 0.99, new OcrTextRegion(600, 160, 80, 20)),
+                new OcrTextLine("技能", 0.99, new OcrTextRegion(610, 200, 60, 20)),
+                new OcrTextLine("第二张描述关键字", 0.99, new OcrTextRegion(600, 340, 120, 20))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            new Dictionary<string, object>
+            {
+                ["闪光优先级"] = new[] { "第二张描述关键字" }
+            },
+            matcher);
+        var task = new ChaosModeTask();
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.True(handled);
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.443, 0.449);
+        Assert.InRange(click.Y, 0.178, 0.185);
+    }
     [Fact]
     public async Task FlashEffectWithoutCardsCapturesDiagnostic()
     {
@@ -234,6 +447,39 @@ public sealed class ChaosNormalFlowTests
         var click = Assert.Single(input.Clicks);
         Assert.InRange(click.X, 0.117, 0.121);
         Assert.InRange(click.Y, 0.842, 0.846);
+    }
+
+    [Fact]
+    public async Task ShopUsesFreeRefreshBeforePaidCardRemoval()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(new Dictionary<string, IReadOnlyList<FeatureBox>>());
+        var removeText = "\u79fb\u9664\u5361\u724c";
+        var freeText = "\u514d\u8d39";
+        var leaveText = "\u79bb\u5f00";
+        var ocr = new OcrFrameResult(
+            "shop",
+            0.99,
+            [
+                new OcrTextLine(removeText, 0.99, new OcrTextRegion(1099, 212, 131, 42)),
+                new OcrTextLine("80", 0.99, new OcrTextRegion(1101, 266, 81, 47)),
+                new OcrTextLine("356", 0.99, new OcrTextRegion(1144, 30, 55, 32)),
+                new OcrTextLine(freeText, 0.99, new OcrTextRegion(229, 819, 67, 39)),
+                new OcrTextLine(leaveText, 0.99, new OcrTextRegion(1488, 818, 72, 43))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, ocr, input, null, matcher);
+        var task = new ChaosModeTask();
+        task.RunState.Shop = true;
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.True(handled);
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.162, 0.166);
+        Assert.InRange(click.Y, 0.928, 0.936);
+        Assert.True(task.RunState.Shop);
+        Assert.False(task.RunState.PendingShopRemoval);
     }
 
     [Theory]
@@ -377,6 +623,7 @@ public sealed class ChaosNormalFlowTests
                 new OcrTextLine("跳过后将无法获得奖励。", 0.99, new OcrTextRegion(548, 351, 476, 39)),
                 new OcrTextLine("确定要跳过吗？", 0.99, new OcrTextRegion(692, 387, 193, 36)),
                 new OcrTextLine("确认", 0.99, new OcrTextRegion(1021, 547, 73, 42)),
+                new OcrTextLine("取消", 0.99, new OcrTextRegion(850, 547, 73, 42)),
                 new OcrTextLine("跳过", 0.99, new OcrTextRegion(1152, 813, 72, 45))
             ]);
         var input = new RecordingInputSink();
@@ -748,7 +995,38 @@ public sealed class ChaosNormalFlowTests
         Assert.Equal("突击护手", task.RunState.EquipmentNames[1]);
     }
     [Fact]
-    public async Task CachedTargetMemberAvatarMatchesSlotAndSkipsTextArchive()
+    public async Task CachedTargetMemberAvatarSkipsStatisticsArchiveAtRunStart()
+    {
+        var store = new MemoryRuntimeFeatureTemplateStore();
+        foreach (var featureName in TargetMemberAvatarCatalog.Features.Select(feature => feature.Name))
+        {
+            store.Save(new RuntimeFeatureTemplate(featureName, 2, 2, new byte[16]));
+        }
+
+        var matcher = new RuntimeFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>());
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            CreateFrame(),
+            new OcrFrameResult(
+                "50/100",
+                0.99,
+                [new OcrTextLine("50/100", 0.99, new OcrTextRegion(300, 20, 60, 20))]),
+            input,
+            new Dictionary<string, object> { ["刷存档主战员"] = "海德玛丽" },
+            matcher,
+            store);
+        var task = new ChaosModeTask();
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.False(handled);
+        Assert.True(task.RunState.SaveTargetMember);
+        Assert.Empty(input.Clicks);
+    }
+
+    [Fact]
+    public async Task CachedTargetMemberAvatarPreventsReopeningStatisticsPage()
     {
         var store = new MemoryRuntimeFeatureTemplateStore();
         foreach (var featureName in new[]
@@ -789,11 +1067,9 @@ public sealed class ChaosNormalFlowTests
 
         var handled = await task.RunOnceAsync(context, CancellationToken.None);
 
-        Assert.True(handled);
+        Assert.False(handled);
         Assert.True(task.RunState.SaveTargetMember);
-        var closeClick = Assert.Single(input.Clicks);
-        Assert.InRange(closeClick.X, 0.959, 0.961);
-        Assert.InRange(closeClick.Y, 0.053, 0.055);
+        Assert.Empty(input.Clicks);
     }
     [Fact]
     public async Task TargetMemberArchiveResumesFromMemberListAfterRestart()
@@ -831,7 +1107,7 @@ public sealed class ChaosNormalFlowTests
     }
 
     [Fact]
-    public async Task TargetMemberArchiveRetriesCloseUntilMemberListActuallyDisappears()
+    public async Task TargetMemberArchiveDoesNotRepeatCloseBeforeRetryTimeout()
     {
         var store = new MemoryRuntimeFeatureTemplateStore();
         var matcher = new RuntimeFeatureMatcher(
@@ -850,6 +1126,49 @@ public sealed class ChaosNormalFlowTests
                 new OcrTextLine("海德玛丽", 0.99, new OcrTextRegion(650, 320, 100, 24))
             ]);
         var task = new ChaosModeTask();
+
+        var firstInput = new RecordingInputSink();
+        var firstContext = CreateContext(
+            CreateFrame(),
+            ocr,
+            firstInput,
+            new Dictionary<string, object> { ["刷存档主战员"] = "海德玛丽" },
+            matcher,
+            store);
+        Assert.True(await task.RunOnceAsync(firstContext, CancellationToken.None));
+        Assert.Single(firstInput.Clicks);
+
+        var repeatedInput = new RecordingInputSink();
+        var repeatedContext = CreateContext(
+            CreateFrame(),
+            ocr,
+            repeatedInput,
+            new Dictionary<string, object> { ["刷存档主战员"] = "海德玛丽" },
+            matcher,
+            store);
+        Assert.True(await task.RunOnceAsync(repeatedContext, CancellationToken.None));
+        Assert.Empty(repeatedInput.Clicks);
+    }
+    [Fact]
+    public async Task TargetMemberArchiveRetriesCloseUntilMemberListActuallyDisappears()
+    {
+        var store = new MemoryRuntimeFeatureTemplateStore();
+        var matcher = new RuntimeFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["target_member"] = [new FeatureBox("target_member", 650, 320, 80, 24, 0.99)]
+            });
+        var ocr = new OcrFrameResult(
+            "主战员 辅战员 命运 套装效果 海德玛丽",
+            0.99,
+            [
+                new OcrTextLine("主战员", 0.99, new OcrTextRegion(440, 20, 100, 30)),
+                new OcrTextLine("辅战员", 0.99, new OcrTextRegion(700, 20, 100, 30)),
+                new OcrTextLine("命运", 0.99, new OcrTextRegion(940, 20, 80, 30)),
+                new OcrTextLine("套装效果", 0.99, new OcrTextRegion(1140, 20, 120, 30)),
+                new OcrTextLine("海德玛丽", 0.99, new OcrTextRegion(650, 320, 100, 24))
+            ]);
+        var task = new ChaosModeTask(targetMemberArchiveTimeout: TimeSpan.Zero);
 
         var firstInput = new RecordingInputSink();
         var firstContext = CreateContext(
@@ -989,6 +1308,91 @@ public sealed class ChaosNormalFlowTests
         Assert.NotEqual(string.Empty, task.RunState.PendingEventOptionKey);
     }
     [Fact]
+    public async Task CopyCardChoicePrefersTargetFeatureBeforeConfiguredPriority()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["target"] = [new FeatureBox("target", 700, 200, 20, 20, 0.99)]
+            });
+        var ocr = new OcrFrameResult(
+            "请选择要复制的卡牌。",
+            0.99,
+            [
+                new OcrTextLine("请选择要复制的卡牌。", 0.99, new OcrTextRegion(700, 90, 200, 40)),
+                new OcrTextLine("跳过", 0.99, new OcrTextRegion(1450, 810, 70, 30))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            new Dictionary<string, object>
+            {
+                ["复制卡牌列表"] = new[] { "技能卡" }
+            },
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.345, 0.348);
+        Assert.InRange(click.Y, 0.478, 0.481);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("复制卡牌选择: 检测到 target 卡牌", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            context.GetRecentLogs(),
+            log => log.Contains("检测到跳过按钮", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CopyCardChoiceSelectsConfiguredCardBeforeGenericSkip()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["skill"] = [new FeatureBox("skill", 600, 190, 20, 20, 0.97)]
+            });
+        var ocr = new OcrFrameResult(
+            "请选择要复制的卡牌。",
+            0.99,
+            [
+                new OcrTextLine("请选择要复制的卡牌。", 0.99, new OcrTextRegion(700, 90, 200, 40)),
+                new OcrTextLine("技能卡", 0.99, new OcrTextRegion(600, 160, 80, 20)),
+                new OcrTextLine("技能", 0.99, new OcrTextRegion(610, 200, 60, 20)),
+                new OcrTextLine("第二张描述关键字", 0.99, new OcrTextRegion(600, 340, 120, 20)),
+                new OcrTextLine("跳过", 0.99, new OcrTextRegion(1450, 810, 70, 30))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            new Dictionary<string, object>
+            {
+                ["复制卡牌列表"] = new[] { "技能卡" }
+            },
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.445, 0.448);
+        Assert.InRange(click.Y, 0.180, 0.184);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("复制卡牌选择: 按优先级选择「技能卡」", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            context.GetRecentLogs(),
+            log => log.Contains("检测到跳过按钮", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task CopyMemberPrioritizesTargetMemberAvatar()
     {
         var frame = CreateFrame();
@@ -1051,11 +1455,18 @@ public sealed class ChaosNormalFlowTests
         Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
         Assert.Single(input.Clicks);
         Assert.Equal(1, task.RunState.CopyMemberAttemptIndex);
+        Assert.NotEqual(default, task.RunState.CopyMemberCandidateClickedAt);
 
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Single(input.Clicks);
+        Assert.Equal(1, task.RunState.CopyMemberAttemptIndex);
+
+        task.RunState.CopyMemberCandidateClickedAt = DateTimeOffset.MinValue;
         Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
         Assert.Equal(2, input.Clicks.Count);
         Assert.Equal(2, task.RunState.CopyMemberAttemptIndex);
 
+        task.RunState.CopyMemberCandidateClickedAt = DateTimeOffset.MinValue;
         Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
         Assert.Equal(3, input.Clicks.Count);
         Assert.Equal(3, task.RunState.CopyMemberAttemptIndex);
@@ -1066,6 +1477,157 @@ public sealed class ChaosNormalFlowTests
         Assert.InRange(input.Clicks[2].X, 0.754, 0.756);
         Assert.InRange(input.Clicks[2].Y, 0.507, 0.509);
     }
+
+    [Fact]
+    public async Task CopyMemberTargetAvatarNeverFallsThroughToOtherMembers()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["target_member_large"] =
+                    [new FeatureBox("target_member_large", 340, 450, 20, 20, 0.99)]
+            });
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            new OcrFrameResult(
+                "选择要复制卡牌的主战员",
+                0.99,
+                [
+                    new OcrTextLine(
+                        "选择要复制卡牌的主战员",
+                        0.99,
+                        new OcrTextRegion(730, 820, 180, 30))
+                ]),
+            input,
+            null,
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Single(input.Clicks);
+        Assert.Equal(1, task.RunState.CopyMemberAttemptIndex);
+
+        task.RunState.CopyMemberCandidateClickedAt = DateTimeOffset.MinValue;
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        Assert.Equal(2, input.Clicks.Count);
+        Assert.All(input.Clicks, click =>
+        {
+            Assert.InRange(click.X, 0.227, 0.229);
+            Assert.InRange(click.Y, 0.509, 0.511);
+        });
+        Assert.Equal(1, task.RunState.CopyMemberAttemptIndex);
+    }
+
+    [Fact]
+    public async Task CopyMemberOwnsActiveFooterConfirmation()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>());
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            new OcrFrameResult(
+                "选择要复制卡牌的主战员 确认",
+                0.99,
+                [
+                    new OcrTextLine(
+                        "选择要复制卡牌的主战员",
+                        0.99,
+                        new OcrTextRegion(730, 820, 180, 30)),
+                    new OcrTextLine(
+                        "确认",
+                        0.99,
+                        new OcrTextRegion(1450, 828, 70, 30))
+                ]),
+            input,
+            null,
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.920, 0.922);
+        Assert.InRange(click.Y, 0.930, 0.932);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("复制主战员确认", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            context.GetRecentLogs(),
+            log => log.Contains("检测到确认按钮", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CopyMemberConfirmationRetriesOnlyAfterCooldown()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>());
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            new OcrFrameResult(
+                "选择要复制卡牌的主战员 确认",
+                0.99,
+                [
+                    new OcrTextLine(
+                        "选择要复制卡牌的主战员",
+                        0.99,
+                        new OcrTextRegion(730, 820, 180, 30)),
+                    new OcrTextLine(
+                        "确认",
+                        0.99,
+                        new OcrTextRegion(1450, 828, 70, 30))
+                ]),
+            input,
+            null,
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Single(input.Clicks);
+        Assert.NotEqual(default, task.RunState.CopyMemberConfirmClickedAt);
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Single(input.Clicks);
+
+        task.RunState.CopyMemberConfirmClickedAt = DateTimeOffset.MinValue;
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Equal(2, input.Clicks.Count);
+        Assert.All(input.Clicks, click =>
+        {
+            Assert.InRange(click.X, 0.920, 0.922);
+            Assert.InRange(click.Y, 0.930, 0.932);
+        });
+    }
+
+    [Fact]
+    public async Task MainMemberFlashOwnsActiveFooterConfirmation()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>());
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, CreateMainMemberFlashOcr(), input, null, matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.920, 0.922);
+        Assert.InRange(click.Y, 0.930, 0.932);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("主战员闪光确认", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            context.GetRecentLogs(),
+            log => log.Contains("检测到确认按钮", StringComparison.Ordinal));
+    }
+
     // 场景素材：TestAssets/FrameBus/main-member-flash-confirm-inactive.png；断言使用纯逻辑 OCR。
     [Fact]
     public async Task MainMemberFlashSelectsTargetMemberWhenConfirmIsInactive()
@@ -1092,6 +1654,7 @@ public sealed class ChaosNormalFlowTests
         Assert.InRange(click.X, 0.754, 0.756);
         Assert.InRange(click.Y, 0.507, 0.509);
         Assert.Equal(1, task.RunState.MainMemberFlashAttemptIndex);
+        Assert.NotEqual(default, task.RunState.MainMemberFlashCandidateClickedAt);
     }
 
     [Fact]
@@ -1112,9 +1675,15 @@ public sealed class ChaosNormalFlowTests
         Assert.Equal(1, task.RunState.MainMemberFlashAttemptIndex);
 
         Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Single(input.Clicks);
+        Assert.Equal(1, task.RunState.MainMemberFlashAttemptIndex);
+
+        task.RunState.MainMemberFlashCandidateClickedAt = DateTimeOffset.MinValue;
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
         Assert.Equal(2, input.Clicks.Count);
         Assert.Equal(2, task.RunState.MainMemberFlashAttemptIndex);
 
+        task.RunState.MainMemberFlashCandidateClickedAt = DateTimeOffset.MinValue;
         Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
         Assert.Equal(3, input.Clicks.Count);
         Assert.Equal(3, task.RunState.MainMemberFlashAttemptIndex);
@@ -1125,6 +1694,42 @@ public sealed class ChaosNormalFlowTests
         Assert.InRange(input.Clicks[2].X, 0.754, 0.756);
         Assert.InRange(input.Clicks[2].Y, 0.507, 0.509);
     }
+
+    [Fact]
+    public async Task MainMemberFlashTargetAvatarNeverFallsThroughToOtherMembers()
+    {
+        var frame = CreateUniformFrame(195);
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["target_member_large"] =
+                    [new FeatureBox("target_member_large", 340, 450, 20, 20, 0.99)]
+            });
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            CreateMainMemberFlashOcr(),
+            input,
+            null,
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Single(input.Clicks);
+        Assert.Equal(1, task.RunState.MainMemberFlashAttemptIndex);
+
+        task.RunState.MainMemberFlashCandidateClickedAt = DateTimeOffset.MinValue;
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        Assert.Equal(2, input.Clicks.Count);
+        Assert.All(input.Clicks, click =>
+        {
+            Assert.InRange(click.X, 0.227, 0.229);
+            Assert.InRange(click.Y, 0.509, 0.511);
+        });
+        Assert.Equal(1, task.RunState.MainMemberFlashAttemptIndex);
+    }
+
     [Fact]
     public async Task ClosePageOverlayHasPriorityOverTargetMemberArchive()
     {
@@ -1232,6 +1837,82 @@ public sealed class ChaosNormalFlowTests
         Assert.Equal(0, task.RunState.RemovedCardCount);
     }
     [Fact]
+    public async Task CardRemovalScrollsBeforeFallbackAndSelectsPriorityCardOnNextPage()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["attack_in_deck"] =
+                [
+                    new FeatureBox("attack_in_deck", 560, 280, 80, 40, 0.99),
+                    new FeatureBox("attack_in_deck", 850, 350, 80, 40, 0.98)
+                ]
+            });
+        var firstOcr = new OcrFrameResult(
+            "请选择1张移除卡牌 剑雨",
+            0.99,
+            [
+                new OcrTextLine("请选择1张移除卡牌", 0.99, new OcrTextRegion(260, 25, 180, 25)),
+                new OcrTextLine("剑雨", 0.99, new OcrTextRegion(610, 258, 100, 25)),
+                new OcrTextLine("基础攻击", 0.99, new OcrTextRegion(620, 282, 100, 25)),
+                new OcrTextLine("测试描述", 0.99, new OcrTextRegion(590, 390, 100, 25))
+            ]);
+        var secondOcr = new OcrFrameResult(
+            "请选择1张移除卡牌 水之伞",
+            0.99,
+            [
+                new OcrTextLine("请选择1张移除卡牌", 0.99, new OcrTextRegion(260, 25, 180, 25)),
+                new OcrTextLine("水之伞", 0.99, new OcrTextRegion(900, 335, 110, 25)),
+                new OcrTextLine("基础技能", 0.99, new OcrTextRegion(920, 365, 100, 25)),
+                new OcrTextLine("目标卡牌描述", 0.99, new OcrTextRegion(900, 450, 120, 25))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            firstOcr,
+            input,
+            new Dictionary<string, object>
+            {
+                ["移除卡牌列表"] = new[] { "水之伞" },
+                ["优先移除基础牌"] = true
+            },
+            matcher,
+            ocrProvider: new SequencedOcrProvider(firstOcr, secondOcr));
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Empty(input.Clicks);
+        var scroll = Assert.Single(input.Scrolls);
+        Assert.InRange(scroll.Point.X, 0.250, 0.252);
+        Assert.InRange(scroll.Point.Y, 0.734, 0.736);
+        Assert.Equal(-3, scroll.WheelNotches);
+        Assert.Equal(0, task.RunState.PendingRemovedCardCount);
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Single(input.Scrolls);
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.595, 0.599);
+        Assert.InRange(click.Y, 0.382, 0.386);
+        Assert.Equal(1, task.RunState.PendingRemovedCardCount);
+    }
+
+    [Fact]
+    public void PriorityCardSelectionDoesNotUseFallbackCandidates()
+    {
+        var cards = new[]
+        {
+            new ChaosCardInfo("剑雨", "技能/基础技能", "测试描述", "skill_in_deck", 0.99, 0.3, 0.5, 0.3)
+        };
+
+        var priority = ChaosShopLogic.SelectPriorityCardIndexes(cards, ["水之伞"], 1);
+        var fallback = ChaosShopLogic.SelectFallbackCardIndexes(cards, 1, preferBaseCards: true);
+
+        Assert.Empty(priority);
+        Assert.Single(fallback);
+    }
+
+    [Fact]
     public async Task ShopRemovalSelectsCardAndRecordsShopSource()
     {
         var task = new ChaosModeTask();
@@ -1310,7 +1991,43 @@ public sealed class ChaosNormalFlowTests
     }
 
     [Fact]
-    public async Task RestClicksFreeRestAndClearsFlag()
+    public async Task ThreeChoiceAndShopRemovalKeepIndependentCounters()
+    {
+        var frame = CreateFrame();
+        var emptyMatcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>());
+        var task = new ChaosModeTask();
+
+        var threeChoiceContext = CreateContext(
+            frame,
+            new OcrFrameResult(
+                "移除",
+                0.99,
+                [new OcrTextLine("移除", 0.99, new OcrTextRegion(900, 820, 100, 30))]),
+            new RecordingInputSink(),
+            null,
+            emptyMatcher);
+        Assert.True(await task.RunOnceAsync(threeChoiceContext, CancellationToken.None));
+        Assert.Equal(1, task.RunState.RemovedCardCount);
+        Assert.Equal(0, task.RunState.ShopRemovedCardCount);
+
+        task.RunState.PendingShopRemoval = true;
+        var shopContext = CreateContext(
+            frame,
+            new OcrFrameResult(
+                "移除",
+                0.99,
+                [new OcrTextLine("移除", 0.99, new OcrTextRegion(1485, 810, 60, 30))]),
+            new RecordingInputSink(),
+            null,
+            emptyMatcher);
+        Assert.True(await task.RunOnceAsync(shopContext, CancellationToken.None));
+        Assert.Equal(2, task.RunState.RemovedCardCount);
+        Assert.Equal(1, task.RunState.ShopRemovedCardCount);
+    }
+
+    [Fact]
+    public async Task RestClicksFreeRestThenWaitsForAndClicksConfirmation()
     {
         var frame = CreateFrame();
         var matcher = new StaticFeatureMatcher(
@@ -1319,21 +2036,24 @@ public sealed class ChaosNormalFlowTests
                 ["rest"] = [new FeatureBox("rest", 500, 500, 100, 80, 0.99)]
             });
         var firstOcr = new OcrFrameResult(
-            "免费",
+            "休息 免费",
             0.99,
-            [new OcrTextLine("免费", 0.99, new OcrTextRegion(350, 600, 80, 25))]);
+            [
+                new OcrTextLine("休息", 0.99, new OcrTextRegion(420, 600, 80, 25)),
+                new OcrTextLine("免费", 0.99, new OcrTextRegion(350, 640, 80, 25))
+            ]);
         var confirmOcr = new OcrFrameResult(
             "确认",
             0.99,
-            [new OcrTextLine("确认", 0.99, new OcrTextRegion(700, 580, 80, 25))]);
+            [new OcrTextLine("确认", 0.99, new OcrTextRegion(700, 580, 80, 25)),
+             new OcrTextLine("取消", 0.99, new OcrTextRegion(900, 580, 80, 25))]);
         var input = new RecordingInputSink();
         var context = CreateContext(
             frame,
             firstOcr,
             input,
             null,
-            matcher,
-            ocrProvider: new SequencedOcrProvider(firstOcr, confirmOcr));
+            matcher);
         var task = new ChaosModeTask();
         task.RunState.FlashOrRest = true;
 
@@ -1343,11 +2063,26 @@ public sealed class ChaosNormalFlowTests
         var click = Assert.Single(input.Clicks);
         Assert.InRange(click.X, 0.342, 0.345);
         Assert.InRange(click.Y, 0.598, 0.601);
+        Assert.True(task.RunState.FlashOrRest);
+        Assert.True(task.RunState.AwaitingRestConfirmation);
+
+        var confirmInput = new RecordingInputSink();
+        var confirmContext = CreateContext(
+            frame,
+            confirmOcr,
+            confirmInput,
+            null,
+            matcher);
+        Assert.True(await task.RunOnceAsync(confirmContext, CancellationToken.None));
+        var confirmClick = Assert.Single(confirmInput.Clicks);
+        Assert.InRange(confirmClick.X, 0.460, 0.465);
+        Assert.InRange(confirmClick.Y, 0.650, 0.665);
         Assert.False(task.RunState.FlashOrRest);
+        Assert.False(task.RunState.AwaitingRestConfirmation);
     }
 
     [Fact]
-    public async Task RestClicksWhenFreeTextMissing()
+    public async Task RestDoesNotClickWhenFreeTextMissing()
     {
         var frame = CreateFrame();
         var matcher = new StaticFeatureMatcher(
@@ -1374,10 +2109,8 @@ public sealed class ChaosNormalFlowTests
         var handled = await task.RunOnceAsync(context, CancellationToken.None);
 
         Assert.True(handled);
-        var click = Assert.Single(input.Clicks);
-        Assert.InRange(click.X, 0.342, 0.345);
-        Assert.InRange(click.Y, 0.598, 0.601);
-        Assert.False(task.RunState.FlashOrRest);
+        Assert.Empty(input.Clicks);
+        Assert.True(task.RunState.FlashOrRest);
     }
 
     [Fact]
@@ -1409,41 +2142,44 @@ public sealed class ChaosNormalFlowTests
         var click = Assert.Single(firstInput.Clicks);
         Assert.InRange(click.X, 0.342, 0.345);
         Assert.InRange(click.Y, 0.598, 0.601);
-        Assert.False(task.RunState.FlashOrRest);
+        Assert.True(task.RunState.FlashOrRest);
+        Assert.True(task.RunState.AwaitingRestConfirmation);
 
         var secondInput = new RecordingInputSink();
+        var skipOnlyOcr = new OcrFrameResult(
+            "跳过",
+            0.99,
+            [new OcrTextLine("跳过", 0.99, new OcrTextRegion(1470, 804, 70, 40))]);
         var secondContext = CreateContext(
             frame,
-            freeRestOcr,
+            skipOnlyOcr,
             secondInput,
             null,
-            matcher);
-        await task.RunOnceAsync(secondContext, CancellationToken.None);
+            new StaticFeatureMatcher(new Dictionary<string, IReadOnlyList<FeatureBox>>()));
+        Assert.True(await task.RunOnceAsync(secondContext, CancellationToken.None));
 
         Assert.Empty(secondInput.Clicks);
     }
     [Fact]
-    public async Task RestClicksFromFreeTextWhenRestFeatureMissing()
+    public async Task RestClicksFromOcrWhenRestFeatureMissing()
     {
         var frame = CreateFrame();
         var matcher = new StaticFeatureMatcher(
             new Dictionary<string, IReadOnlyList<FeatureBox>>());
         var firstOcr = new OcrFrameResult(
-            "免费",
+            "休息 免费",
             0.99,
-            [new OcrTextLine("免费", 0.99, new OcrTextRegion(350, 600, 80, 25))]);
-        var confirmOcr = new OcrFrameResult(
-            "确认",
-            0.99,
-            [new OcrTextLine("确认", 0.99, new OcrTextRegion(700, 580, 80, 25))]);
+            [
+                new OcrTextLine("休息", 0.99, new OcrTextRegion(420, 600, 80, 25)),
+                new OcrTextLine("免费", 0.99, new OcrTextRegion(350, 640, 80, 25))
+            ]);
         var input = new RecordingInputSink();
         var context = CreateContext(
             frame,
             firstOcr,
             input,
             null,
-            matcher,
-            ocrProvider: new SequencedOcrProvider(firstOcr, confirmOcr));
+            matcher);
         var task = new ChaosModeTask();
         task.RunState.FlashOrRest = true;
 
@@ -1451,9 +2187,10 @@ public sealed class ChaosNormalFlowTests
 
         Assert.True(handled);
         var click = Assert.Single(input.Clicks);
-        Assert.InRange(click.X, 0.242, 0.245);
-        Assert.InRange(click.Y, 0.679, 0.682);
-        Assert.False(task.RunState.FlashOrRest);
+        Assert.InRange(click.X, 0.286, 0.289);
+        Assert.InRange(click.Y, 0.678, 0.683);
+        Assert.True(task.RunState.FlashOrRest);
+        Assert.True(task.RunState.AwaitingRestConfirmation);
     }
 
     [Fact]
@@ -1496,8 +2233,11 @@ public sealed class ChaosNormalFlowTests
         var click = Assert.Single(input.Clicks);
         Assert.InRange(click.X, 0.705, 0.708);
         Assert.InRange(click.Y, 0.598, 0.602);
-        Assert.False(task.RunState.FlashOrRest);
-    }    [Fact]
+        Assert.True(task.RunState.FlashOrRest);
+        Assert.True(task.RunState.AwaitingRestConfirmation);
+    }
+
+    [Fact]
     public async Task RestMeditatesWhenPendingAndCreditEnough()
     {
         var frame = CreateFrame();
@@ -1535,7 +2275,8 @@ public sealed class ChaosNormalFlowTests
         var click = Assert.Single(input.Clicks);
         Assert.InRange(click.X, 0.705, 0.708);
         Assert.InRange(click.Y, 0.598, 0.602);
-        Assert.False(task.RunState.FlashOrRest);
+        Assert.True(task.RunState.FlashOrRest);
+        Assert.True(task.RunState.AwaitingRestConfirmation);
     }
 
     [Fact]
@@ -1573,6 +2314,46 @@ public sealed class ChaosNormalFlowTests
         var click = Assert.Single(input.Clicks);
         Assert.InRange(click.X, 0.578, 0.581);
         Assert.InRange(click.Y, 0.839, 0.843);
+    }
+
+    [Fact]
+    public async Task VaultEntryEventPressesF1WithoutSelectingLeaveOption()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["event1"] = [new FeatureBox("event1", 400, 850, 50, 20, 0.97)],
+                ["event2"] = [new FeatureBox("event2", 1000, 850, 50, 20, 0.98)]
+            });
+        var ocr = new OcrFrameResult(
+            "进入门内触发事件[宝库内部] 离开",
+            0.99,
+            [
+                new OcrTextLine(
+                    "进入门内触发事件[宝库内部]",
+                    0.99,
+                    new OcrTextRegion(400, 760, 260, 30)),
+                new OcrTextLine(
+                    "离开",
+                    0.99,
+                    new OcrTextRegion(1000, 760, 80, 30))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, ocr, input, null, matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        Assert.Empty(input.Clicks);
+        Assert.Equal([InputKey.F1], input.Keys);
+        Assert.NotEqual(string.Empty, task.RunState.PendingEventOptionKey);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("仅按 F1", StringComparison.Ordinal));
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Equal([InputKey.F1], input.Keys);
     }
 
     [Fact]
@@ -1671,6 +2452,35 @@ public sealed class ChaosNormalFlowTests
     }
 
     [Fact]
+    public async Task SkipDoesNotRepeatAcrossOcrJitterOnSameSemanticPage()
+    {
+        var frame = CreateFrame();
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            SkipFrameResult("frame-a"),
+            input,
+            null,
+            new StaticFeatureMatcher(new Dictionary<string, IReadOnlyList<FeatureBox>>()),
+            ocrProvider: new SequencedOcrProvider(
+                SkipFrameResult("frame-a"),
+                SkipFrameResult("frame-b"),
+                SkipFrameResult("frame-c")));
+        var task = new ChaosModeTask();
+
+        var firstHandled = await task.RunOnceAsync(context, CancellationToken.None);
+        Assert.True(
+            firstHandled,
+            string.Join(Environment.NewLine, context.GetRecentLogs()));
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.940, 0.960);
+        Assert.InRange(click.Y, 0.910, 0.930);
+    }
+
+    [Fact]
     public async Task EventTaskDoesNotClickForbiddenOption()
     {
         var frame = CreateFrame();
@@ -1745,7 +2555,7 @@ public sealed class ChaosNormalFlowTests
         Assert.Empty(input.Clicks);
     }
     [Fact]
-    public async Task EquipmentInstallToOtherMemberClicksOnceUntilPageChanges()
+    public async Task EquipmentInstallWaitsForConfirmBeforeReselecting()
     {
         var frame = CreateFrame();
         var qualityOffset = (368 * frame.Stride) + (187 * 4);
@@ -1784,7 +2594,6 @@ public sealed class ChaosNormalFlowTests
         var click = Assert.Single(input.Clicks);
         Assert.InRange(click.X, 0.755, 0.757);
         Assert.InRange(click.Y, 0.521, 0.523);
-        Assert.Single(input.HoverClicks);
 
         var repeatedInput = new RecordingInputSink();
         var repeatedContext = CreateContext(
@@ -1800,11 +2609,18 @@ public sealed class ChaosNormalFlowTests
 
         Assert.True(repeatedHandled);
         Assert.Empty(repeatedInput.Clicks);
+        Assert.True(task.RunState.EquipmentInstallAwaitingConfirm);
+
+        Assert.True(await task.RunOnceAsync(repeatedContext, CancellationToken.None));
+
+        Assert.Empty(repeatedInput.Clicks);
+        Assert.False(task.RunState.EquipmentInstallAwaitingConfirm);
+        Assert.Equal("突击护手", task.RunState.EquipmentNames[1]);
     }
     [Fact]
     public async Task EquipmentPageClicksConfirmAfterSelectingMember()
     {
-        var frame = CreateFrame();
+        var frame = CreateUniformFrame(150);
         var qualityOffset = (368 * frame.Stride) + (187 * 4);
         frame.Pixels[qualityOffset] = 138;
         frame.Pixels[qualityOffset + 1] = 76;
@@ -1861,6 +2677,302 @@ public sealed class ChaosNormalFlowTests
         Assert.InRange(input.Clicks[1].X, 0.920, 0.925);
         Assert.InRange(input.Clicks[1].Y, 0.925, 0.935);
     }
+    [Fact]
+    public async Task EquipmentInstallPageWithoutTitleRoutesBeforeGenericConfirm()
+    {
+        var frame = CreateFrame();
+        var qualityOffset = (368 * frame.Stride) + (187 * 4);
+        frame.Pixels[qualityOffset] = 138;
+        frame.Pixels[qualityOffset + 1] = 76;
+        frame.Pixels[qualityOffset + 2] = 61;
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["leveltag"] =
+                [
+                    new FeatureBox("leveltag", 980, 330, 20, 20, 0.99),
+                    new FeatureBox("leveltag", 980, 460, 20, 20, 0.98),
+                    new FeatureBox("leveltag", 980, 590, 20, 20, 0.97)
+                ],
+                ["target_member_tiny"] =
+                [
+                    new FeatureBox("target_member_tiny", 1040, 450, 20, 20, 0.99)
+                ]
+            });
+        var ocr = new OcrFrameResult(
+            "请选择主战员 确认",
+            0.99,
+            [
+                new OcrTextLine("请选择主战员", 0.99, new OcrTextRegion(1390, 108, 170, 28)),
+                new OcrTextLine("突击护手", 0.99, new OcrTextRegion(500, 350, 120, 30)),
+                new OcrTextLine("防御力", 0.99, new OcrTextRegion(350, 405, 100, 25)),
+                new OcrTextLine("战斗开始时，反击3", 0.99, new OcrTextRegion(350, 470, 250, 30)),
+                new OcrTextLine("确认", 0.99, new OcrTextRegion(1450, 820, 60, 30))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            new Dictionary<string, object> { ["刷存档主战员"] = "海德玛丽" },
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        Assert.Single(input.Clicks);
+        Assert.InRange(input.Clicks[0].X, 0.755, 0.757);
+        Assert.InRange(input.Clicks[0].Y, 0.520, 0.524);
+        Assert.True(task.RunState.EquipmentInstallAwaitingConfirm);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("绑定第2号主战员", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            context.GetRecentLogs(),
+            log => log.Contains("检测到确认按钮", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task EquipmentInstallUsesDictionarySlotAndConfiguredTargetBeforeConfirm()
+    {
+        var frame = CreateFrame();
+        var qualityOffset = (368 * frame.Stride) + (187 * 4);
+        frame.Pixels[qualityOffset] = 69;
+        frame.Pixels[qualityOffset + 1] = 88;
+        frame.Pixels[qualityOffset + 2] = 160;
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["leveltag"] =
+                [
+                    new FeatureBox("leveltag", 980, 330, 20, 20, 0.99),
+                    new FeatureBox("leveltag", 980, 460, 20, 20, 0.98),
+                    new FeatureBox("leveltag", 980, 590, 20, 20, 0.97)
+                ],
+                ["target_member_tiny"] =
+                [
+                    new FeatureBox("target_member_tiny", 1040, 450, 20, 20, 0.99)
+                ]
+            });
+        var ocr = new OcrFrameResult(
+            "装备 美食之书 攻击力 确认",
+            0.99,
+            [
+                new OcrTextLine("装备", 0.99, new OcrTextRegion(757, 88, 84, 52)),
+                new OcrTextLine("美食之书", 0.99, new OcrTextRegion(658, 350, 126, 39)),
+                new OcrTextLine("攻击力", 0.99, new OcrTextRegion(616, 400, 81, 34)),
+                new OcrTextLine("发动费用大于等于2的攻击卡牌时，赋予目标痛击3", 0.99, new OcrTextRegion(613, 448, 551, 32)),
+                new OcrTextLine("确认", 0.99, new OcrTextRegion(1450, 820, 60, 30))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            new Dictionary<string, object> { ["刷存档主战员"] = "海德玛丽" },
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        Assert.Single(input.Clicks);
+        Assert.InRange(input.Clicks[0].X, 0.755, 0.757);
+        Assert.InRange(input.Clicks[0].Y, 0.520, 0.524);
+        Assert.True(task.RunState.EquipmentInstallAwaitingConfirm);
+        Assert.Equal("美食之书", task.RunState.EquipmentNames[0]);
+        Assert.Equal("史诗", task.RunState.EquipmentQualities[0]);
+        Assert.DoesNotContain(
+            context.GetRecentLogs(),
+            log => log.Contains("检测到确认按钮", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task EquipmentInstallWithIncompleteCandidateDoesNotFallBackToConfirm()
+    {
+        var frame = CreateFrame();
+        var ocr = new OcrFrameResult(
+            "装备 请选择主战员 确认",
+            0.99,
+            [
+                new OcrTextLine("装备", 0.99, new OcrTextRegion(760, 95, 80, 30)),
+                new OcrTextLine("请选择主战员", 0.99, new OcrTextRegion(1390, 108, 170, 28)),
+                new OcrTextLine("确认", 0.99, new OcrTextRegion(1450, 820, 60, 30))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            null,
+            new StaticFeatureMatcher(new Dictionary<string, IReadOnlyList<FeatureBox>>()));
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        Assert.Empty(input.Clicks);
+        Assert.False(task.RunState.EquipmentInstallAwaitingConfirm);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("等待下一帧重新识别", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            context.GetRecentLogs(),
+            log => log.Contains("检测到确认按钮", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task EquipmentInstallRetriesMemberSelectionAfterConfirmWaitRounds()
+    {
+        var frame = CreateFrame();
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["leveltag"] = [new FeatureBox("leveltag", 980, 460, 20, 20, 0.98)]
+            });
+        var ocr = new OcrFrameResult(
+            "装备 请选择主战员 突击护手 防御力",
+            0.99,
+            [
+                new OcrTextLine("装备", 0.99, new OcrTextRegion(760, 95, 80, 30)),
+                new OcrTextLine("请选择主战员", 0.99, new OcrTextRegion(1390, 108, 170, 28)),
+                new OcrTextLine("突击护手", 0.99, new OcrTextRegion(500, 350, 120, 30)),
+                new OcrTextLine("防御力", 0.99, new OcrTextRegion(350, 405, 100, 25))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, ocr, input, null, matcher);
+        var task = new ChaosModeTask();
+        task.RunState.EquipmentInstallAwaitingConfirm = true;
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+        Assert.Empty(input.Clicks);
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.755, 0.757);
+        Assert.InRange(click.Y, 0.520, 0.524);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("回退本次装备记录并重新选择主战员", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AwaitingEquipmentConfirmStillClicksWhenColorProbeLooksDisabled()
+    {
+        var frame = CreateUniformFrame(150);
+        var ocr = new OcrFrameResult(
+            "装备 请选择主战员 突击护手 防御力 确认",
+            0.99,
+            [
+                new OcrTextLine("装备", 0.99, new OcrTextRegion(760, 95, 80, 30)),
+                new OcrTextLine("请选择主战员", 0.99, new OcrTextRegion(1390, 108, 170, 28)),
+                new OcrTextLine("突击护手", 0.99, new OcrTextRegion(500, 350, 120, 30)),
+                new OcrTextLine("防御力", 0.99, new OcrTextRegion(350, 405, 100, 25)),
+                new OcrTextLine("确认", 0.99, new OcrTextRegion(1450, 820, 60, 30))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            null,
+            new StaticFeatureMatcher(
+                new Dictionary<string, IReadOnlyList<FeatureBox>>
+                {
+                    ["leveltag"] = [new FeatureBox("leveltag", 980, 460, 20, 20, 0.98)]
+                }));
+        var task = new ChaosModeTask();
+        task.RunState.EquipmentInstallAwaitingConfirm = true;
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.920, 0.922);
+        Assert.InRange(click.Y, 0.930, 0.932);
+        Assert.True(task.RunState.EquipmentInstallAwaitingConfirm);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("按 OCR 确认文本继续执行确认", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ConfiguredTargetWithoutAvatarDoesNotRecordFirstMemberEquipment()
+    {
+        var frame = CreateFrame();
+        var qualityOffset = (368 * frame.Stride) + (187 * 4);
+        frame.Pixels[qualityOffset] = 138;
+        frame.Pixels[qualityOffset + 1] = 76;
+        frame.Pixels[qualityOffset + 2] = 61;
+        var matcher = new StaticFeatureMatcher(
+            new Dictionary<string, IReadOnlyList<FeatureBox>>
+            {
+                ["leveltag"] =
+                [
+                    new FeatureBox("leveltag", 980, 330, 20, 20, 0.99),
+                    new FeatureBox("leveltag", 980, 460, 20, 20, 0.98),
+                    new FeatureBox("leveltag", 980, 590, 20, 20, 0.97)
+                ]
+            });
+        var ocr = new OcrFrameResult(
+            "请选择主战员",
+            0.99,
+            [
+                new OcrTextLine("请选择主战员", 0.99, new OcrTextRegion(1390, 108, 170, 28)),
+                new OcrTextLine("突击护手", 0.99, new OcrTextRegion(500, 350, 120, 30)),
+                new OcrTextLine("防御力", 0.99, new OcrTextRegion(350, 405, 100, 25)),
+                new OcrTextLine("战斗开始时，反击3", 0.99, new OcrTextRegion(350, 470, 250, 30))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            ocr,
+            input,
+            new Dictionary<string, object> { ["刷存档主战员"] = "海德玛丽" },
+            matcher);
+        var task = new ChaosModeTask();
+
+        Assert.True(await task.RunOnceAsync(context, CancellationToken.None));
+
+        Assert.Equal(string.Empty, task.RunState.EquipmentNames[1]);
+        Assert.Contains(
+            context.GetRecentLogs(),
+            log => log.Contains("不会把第1号主战员当作刷存档目标", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ObtainRewardRetriesWhenPageDoesNotChange()
+    {
+        var task = new ChaosModeTask();
+        var input = new RecordingInputSink();
+        var ocr = new OcrFrameResult(
+            "获得",
+            0.99,
+            [new OcrTextLine("获得", 0.99, new OcrTextRegion(1450, 815, 72, 34))]);
+        var config = new Dictionary<string, object>
+        {
+            [ChaosModeConfigSchema.RecognitionFallbackWaitRoundsKey] = 1
+        };
+
+        for (var frame = 0; frame < 2; frame++)
+        {
+            Assert.True(await task.RunOnceAsync(
+                CreateContext(
+                    CreateFrame(),
+                    ocr,
+                    input,
+                    config,
+                    new StaticFeatureMatcher(new Dictionary<string, IReadOnlyList<FeatureBox>>())),
+                CancellationToken.None));
+        }
+
+        Assert.Equal(2, input.Clicks.Count);
+        Assert.All(input.Clicks, click =>
+        {
+            Assert.InRange(click.X, 0.92, 0.93);
+            Assert.InRange(click.Y, 0.91, 0.93);
+        });
+    }
+
+
     private static OcrFrameResult CreateEventOptionsOcr()
         => new(
             "获得资源 挑战敌人",
@@ -1877,6 +2989,15 @@ public sealed class ChaosNormalFlowTests
                 ["event1"] = [new FeatureBox("event1", 400, 850, 50, 20, 0.96)],
                 ["event2"] = [new FeatureBox("event2", 900, 850, 50, 20, 0.97)]
             });
+    private static OcrFrameResult SkipFrameResult(string marker)
+        => new(
+            marker,
+            0.99,
+            [
+                new OcrTextLine("\u8DF3\u8FC7", 0.99, new OcrTextRegion(1500, 820, 60, 25)),
+                new OcrTextLine(marker, 0.99, new OcrTextRegion(20, 20, 80, 20))
+            ]);
+
     private static TaskContext CreateContext(
         BgraFrame frame,
         OcrFrameResult ocr,
@@ -1885,7 +3006,8 @@ public sealed class ChaosNormalFlowTests
         IFeatureMatcher featureMatcher,
         IRuntimeFeatureTemplateStore? runtimeFeatureTemplates = null,
         IOcrProvider? ocrProvider = null,
-        IDecisionSnapshotSink? decisionSnapshots = null)
+        IDecisionSnapshotSink? decisionSnapshots = null,
+        ITaskPauseRequestSink? pauseRequestSink = null)
         => new(
             "normal-flow-test",
             UiProfile.WindowsPc,
@@ -1896,7 +3018,8 @@ public sealed class ChaosNormalFlowTests
             ocr: ocrProvider ?? new StaticOcrProvider(ocr),
             featureMatcher: featureMatcher,
             runtimeFeatureTemplates: runtimeFeatureTemplates,
-            decisionSnapshots: decisionSnapshots);
+            decisionSnapshots: decisionSnapshots,
+            pauseRequestSink: pauseRequestSink);
 
     private static OcrFrameResult CreateMainMemberFlashOcr()
         => new(
@@ -2201,24 +3324,27 @@ public sealed class ChaosNormalFlowTests
                    && centerY <= region.Bottom;
         }
     }
+    private sealed class RecordingPauseRequestSink : ITaskPauseRequestSink
+    {
+        public List<string> Requests { get; } = [];
+
+        public bool RequestPause(string sessionId, string reason)
+        {
+            Requests.Add(reason);
+            return true;
+        }
+    }
+
     private sealed class RecordingInputSink : IInputSink
     {
         public List<RelativePoint> Clicks { get; } = [];
-        public List<RelativePoint> HoverClicks { get; } = [];
+        public List<InputKey> Keys { get; } = [];
+        public List<(RelativePoint Point, int WheelNotches)> Scrolls { get; } = [];
 
         public ValueTask ClickAsync(
             RelativePoint point,
             CancellationToken cancellationToken = default)
         {
-            Clicks.Add(point);
-            return ValueTask.CompletedTask;
-        }
-
-        public ValueTask HoverClickAsync(
-            RelativePoint point,
-            CancellationToken cancellationToken = default)
-        {
-            HoverClicks.Add(point);
             Clicks.Add(point);
             return ValueTask.CompletedTask;
         }
@@ -2230,8 +3356,20 @@ public sealed class ChaosNormalFlowTests
             CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
 
+        public ValueTask ScrollAsync(
+            RelativePoint point,
+            int wheelNotches,
+            CancellationToken cancellationToken = default)
+        {
+            Scrolls.Add((point, wheelNotches));
+            return ValueTask.CompletedTask;
+
+        }
         public ValueTask KeyAsync(InputKey key, CancellationToken cancellationToken = default)
-            => ValueTask.CompletedTask;
+        {
+            Keys.Add(key);
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask TextAsync(string text, CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;

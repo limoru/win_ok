@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Automation.Core.Frames;
 
 namespace Automation.Targets.Windows;
@@ -115,6 +116,7 @@ internal sealed class WindowsFrameSource : IFrameSource, IAsyncDisposable
     {
         while (!_cancellationToken.IsCancellationRequested)
         {
+            var iterationStarted = Stopwatch.GetTimestamp();
             try
             {
                 var windowHandle = _resolveWindowHandle();
@@ -158,7 +160,12 @@ internal sealed class WindowsFrameSource : IFrameSource, IAsyncDisposable
 
             try
             {
-                await Task.Delay(_options.CaptureInterval, _cancellationToken).ConfigureAwait(false);
+                var elapsed = Stopwatch.GetElapsedTime(iterationStarted);
+                var remaining = _options.CaptureInterval - elapsed;
+                if (remaining > TimeSpan.Zero)
+                {
+                    await Task.Delay(remaining, _cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
             {

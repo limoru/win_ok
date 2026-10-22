@@ -230,36 +230,6 @@
 
                     <Border Height="1" Background="#1FFFFFFF" Margin="0,0,0,14" />
 
-                    <TextBlock Text="判断样本"
-                               FontSize="14"
-                               FontWeight="SemiBold"
-                               Foreground="White" />
-                    <TextBlock Text="选择当前画面类型，生成原图、标注图、OCR 明细和建议 ROI；不修改任务配置。"
-                               Style="{StaticResource CaptionText}"
-                               Foreground="#90FFFFFF"
-                               TextWrapping="Wrap"
-                               Margin="0,4,0,10" />
-                    <ComboBox x:Name="SnapshotPageTypeBox"
-                              DisplayMemberPath="PageLabel"
-                              SelectedIndex="0"
-                              MinHeight="32"
-                              Margin="0,0,0,8"
-                              AutomationProperties.AutomationId="DeveloperLargePreviewSnapshotPageType" />
-                    <Button Content="OCR 并生成标注样本"
-                            Style="{StaticResource PrimaryButton}"
-                            HorizontalAlignment="Stretch"
-                            Click="CaptureDecisionSnapshotButton_Click"
-                            AutomationProperties.AutomationId="DeveloperLargePreviewSnapshotButton" />
-                    <TextBlock x:Name="DecisionSnapshotStatusText"
-                               AutomationProperties.AutomationId="DeveloperLargePreviewSnapshotStatus"
-                               Text="等待生成样本"
-                               Style="{StaticResource CaptionText}"
-                               Foreground="#90FFFFFF"
-                               TextWrapping="Wrap"
-                               Margin="0,8,0,16" />
-
-                    <Border Height="1" Background="#1FFFFFFF" Margin="0,0,0,14" />
-
                     <TextBlock Text="OCR"
                                FontSize="14"
                                FontWeight="SemiBold"

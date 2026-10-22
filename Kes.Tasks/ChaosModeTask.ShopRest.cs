@@ -11,6 +11,8 @@ public sealed partial class ChaosModeTask
 {
     private const string CardRewardPriorityKey = "卡牌奖励优先级";
     private const string DesireCardPriorityKey = "欲望卡牌优先级";
+    private static readonly TimeSpan OwnedFooterConfirmationRetryInterval =
+        TimeSpan.FromMilliseconds(2500);
 
     // Python handle_card_reward (utils.py:2193)：卡牌奖励页面按优先级选牌，未命中时刷新或跳过。
     private static async ValueTask<bool> HandleCardRewardAsync(
@@ -18,12 +20,13 @@ public sealed partial class ChaosModeTask
         CancellationToken cancellationToken)
     {
         var pageTitle = RegionText(page, new RelativeRegion(0.345, 0.012, 0.642, 0.141));
-        if (!pageTitle.Contains("卡牌奖励", StringComparison.Ordinal))
+        var isGetCardPage = pageTitle.Contains("获得卡牌", StringComparison.Ordinal);
+        if (!pageTitle.Contains("卡牌奖励", StringComparison.Ordinal) && !isGetCardPage)
         {
             return false;
         }
 
-        page.Context.LogInfo("检测到卡牌奖励页面", "activity");
+        page.Context.LogInfo(isGetCardPage ? "检测到获得卡牌页面" : "检测到卡牌奖励页面", "activity");
         await CaptureDecisionSnapshotAsync(
                 page,
                 DecisionSnapshotCatalog.CardRewardReasonId,
@@ -32,6 +35,15 @@ public sealed partial class ChaosModeTask
         var cards = page.Classification.Cards;
         if (cards.Count == 0)
         {
+            if (isGetCardPage)
+            {
+                return await CloseGetCardPageAsync(
+                        page,
+                        "获得卡牌页面未识别到卡牌，点击关闭",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             page.Context.LogInfo("卡牌奖励页面未识别到卡牌，等待重新识别并记录诊断。", "warning");
             return await SkipCardRewardAsync(page, cancellationToken, "卡牌奖励未识别到卡牌，点击跳过")
                 .ConfigureAwait(false);
@@ -65,6 +77,15 @@ public sealed partial class ChaosModeTask
             return true;
         }
 
+        if (isGetCardPage)
+        {
+            return await CloseGetCardPageAsync(
+                    page,
+                    "获得卡牌未命中优先级，点击关闭",
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         var refreshBoxes = FindOcrBoxes(page, new RelativeRegion(0.105, 0.764, 0.903, 0.851))
             .Where(line =>
             {
@@ -85,6 +106,22 @@ public sealed partial class ChaosModeTask
 
         return await SkipCardRewardAsync(page, cancellationToken, "卡牌奖励未命中优先级，点击跳过")
             .ConfigureAwait(false);
+    }
+
+    private static async ValueTask<bool> CloseGetCardPageAsync(
+        ChaosModePage page,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        var closeBox = FindTextAnywhere(page, GameText(page, "关闭"));
+        if (closeBox is null)
+        {
+            page.Context.LogInfo("获得卡牌页面未识别到关闭按钮。", "warning");
+            return false;
+        }
+
+        await ClickTextAsync(page, closeBox, message, cancellationToken).ConfigureAwait(false);
+        return true;
     }
 
     private static async ValueTask<bool> SkipCardRewardAsync(
@@ -324,7 +361,6 @@ public sealed partial class ChaosModeTask
         }
 
         RecordNeutralCard(page);
-        page.ActionArbiter.MarkPageActionSent("card-assign", page.Observation);
         return false;
     }
 
@@ -354,11 +390,6 @@ public sealed partial class ChaosModeTask
             page.Context.LogInfo("德朗商店移除卡牌已售罄", "activity");
             page.State.Shop = false;
             hasRemoveCard = false;
-        }
-
-        if (hasRemoveCard && await TryRemoveShopCardAsync(page, removeCardBox!, cancellationToken).ConfigureAwait(false))
-        {
-            return true;
         }
 
         var currentCredit = GetCurrentCredit(page);
@@ -462,6 +493,12 @@ public sealed partial class ChaosModeTask
             return true;
         }
 
+        // Spend the free refresh before the paid card removal entry.
+        if (hasRemoveCard && await TryRemoveShopCardAsync(page, removeCardBox!, cancellationToken).ConfigureAwait(false))
+        {
+            return true;
+        }
+
         page.State.Shop = false;
         page.Context.LogInfo("德朗商店已无可执行操作，本次商店流程结束", "activity");
         return false;
@@ -478,18 +515,24 @@ public sealed partial class ChaosModeTask
                 line.Text.Contains("免费", StringComparison.Ordinal)
                 || line.Text.Contains("免費", StringComparison.Ordinal));
         var hasFreeRest = freeRestBox is not null;
-        var canRest = (restFeature is not null || hasFreeRest)
+        var restTextBox = FindOcrBoxes(page, new RelativeRegion(0.157, 0.503, 0.467, 0.863))
+            .FirstOrDefault(line => ContainsAny(page, line, "休息"));
+        var hasRestAction = restFeature is not null || restTextBox is not null;
+        var canRest = hasRestAction
+                      && hasFreeRest
                       && page.State.FlashOrRest;
-        if (canRest && !hasFreeRest)
-        {
-            page.Context.LogInfo("休息区域未识别到「免费」，按可用休息继续处理。", "warning");
-        }
 
         var restPoint = new RelativePoint(0.267, 0.750);
         if (restFeature is not null)
         {
             var center = RelativeCenter(restFeature, page);
             restPoint = new RelativePoint(center.X, center.Y);
+        }
+        else if (restTextBox is not null)
+        {
+            restPoint = new RelativePoint(
+                (restTextBox.Region.X + (restTextBox.Region.Width / 2d)) / page.Frame.Width,
+                (restTextBox.Region.Y + (restTextBox.Region.Height / 2d)) / page.Frame.Height);
         }
         else if (freeRestBox is not null)
         {
@@ -551,16 +594,18 @@ public sealed partial class ChaosModeTask
         {
             if (restFeature is null)
             {
-                page.Context.LogInfo("rest特征未命中，使用免费休息文字位置兜底。", "warning");
+                page.Context.LogInfo("rest特征未命中，使用“休息”文字位置兜底。", "warning");
             }
 
+            page.ExpectCenterConfirmationAfterAction("休息");
             await ClickPointAsync(
                     page,
                     restPoint,
                     "检测到休息界面，点击休息",
                     cancellationToken)
                 .ConfigureAwait(false);
-            page.State.FlashOrRest = false;
+            page.State.AwaitingRestConfirmation = true;
+            page.State.RestConfirmationStartedAt = DateTimeOffset.Now;
             return true;
         }
 
@@ -574,13 +619,15 @@ public sealed partial class ChaosModeTask
                 $"检测到可冥想卡牌[{string.Join(", ", pendingCards)}]，当前信用点={currentCredit}，冥想费用={meditationCost}，点击冥想",
                 "activity");
             var center = RelativeCenter(meditateFeature!, page);
+            page.ExpectCenterConfirmationAfterAction("冥想");
             await ClickPointAsync(
                     page,
                     new RelativePoint(center.X, center.Y),
                     "点击冥想",
                     cancellationToken)
                 .ConfigureAwait(false);
-            page.State.FlashOrRest = false;
+            page.State.AwaitingRestConfirmation = true;
+            page.State.RestConfirmationStartedAt = DateTimeOffset.Now;
             return true;
         }
 
@@ -686,6 +733,11 @@ public sealed partial class ChaosModeTask
         }
 
         page.Context.LogInfo($"检测到卡牌{action}选择，需选择{count}张", "activity");
+        if (action == "移除")
+        {
+            return await HandleRemoveCardSelectionAsync(page, count, cancellationToken).ConfigureAwait(false);
+        }
+
         IReadOnlyList<ChaosCardInfo> cards = page.Context.FeatureMatcher is null
             ? Array.Empty<ChaosCardInfo>()
             : ChaosCardRecognition.RecognizeDeck(page.Frame, page.Recognized, page.Context.FeatureMatcher);
@@ -732,6 +784,219 @@ public sealed partial class ChaosModeTask
         return true;
     }
 
+    private const int CardSelectionMaxScrolls = 20;
+    private const int CardSelectionNoChangeLimit = 2;
+    private static readonly RelativePoint CardSelectionScrollPoint = new(0.251, 0.735);
+
+    private static async ValueTask<bool> HandleRemoveCardSelectionAsync(
+        ChaosModePage page,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        var state = page.State;
+        if (!string.Equals(state.CardSelectionAction, "移除", StringComparison.Ordinal)
+            || state.CardSelectionTargetCount != count)
+        {
+            state.ResetCardSelectionSearch();
+            state.CardSelectionAction = "移除";
+            state.CardSelectionTargetCount = count;
+        }
+
+        IReadOnlyList<ChaosCardInfo> cards = page.Context.FeatureMatcher is null
+            ? Array.Empty<ChaosCardInfo>()
+            : ChaosCardRecognition.RecognizeDeck(page.Frame, page.Recognized, page.Context.FeatureMatcher);
+        LogCardSelectionCandidates(page, cards);
+        var remaining = Math.Max(1, count - state.PendingRemovedCardCount);
+        var priority = page.Context.Config.GetStringList("移除卡牌列表");
+        var priorityIndexes = ChaosShopLogic.SelectPriorityCardIndexes(cards, priority, remaining);
+        if (priorityIndexes.Count > 0)
+        {
+            await ClickSelectedCardIndexesAsync(
+                    page,
+                    cards,
+                    priorityIndexes,
+                    "命中移除优先级",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            state.CardSelectionInputVersion++;
+            return true;
+        }
+
+        var fingerprint = page.Observation.Fingerprint.Value;
+        var unchanged = state.CardSelectionScrollCount > 0
+                        && string.Equals(
+                            state.CardSelectionLastFingerprint,
+                            fingerprint,
+                            StringComparison.Ordinal);
+        state.CardSelectionUnchangedScrollCount = unchanged
+            ? state.CardSelectionUnchangedScrollCount + 1
+            : 0;
+        state.CardSelectionLastFingerprint = fingerprint;
+        if (state.CardSelectionScrollCount < CardSelectionMaxScrolls
+            && state.CardSelectionUnchangedScrollCount < CardSelectionNoChangeLimit)
+        {
+            state.CardSelectionScrollCount++;
+            state.CardSelectionInputVersion++;
+            page.Context.LogInfo(
+                $"移除优先级未命中，向下滚动搜索卡牌：第{state.CardSelectionScrollCount}/{CardSelectionMaxScrolls}次。",
+                "activity");
+            await ScrollCardSelectionPageAsync(page, cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+
+        page.Context.LogInfo(
+            $"移除优先级搜索结束：滚动{state.CardSelectionScrollCount}次，未命中「{string.Join("、", priority)}」，进入兜底选择。",
+            "activity");
+        var preferBase = page.Context.GetTaskConfig("优先移除基础牌", true);
+        var fallbackIndexes = ChaosShopLogic.SelectFallbackCardIndexes(cards, remaining, preferBase);
+        if (fallbackIndexes.Count > 0)
+        {
+            await ClickSelectedCardIndexesAsync(
+                    page,
+                    cards,
+                    fallbackIndexes,
+                    "扫描到底后执行删卡兜底",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            state.CardSelectionInputVersion++;
+            return true;
+        }
+
+        var cancelOrSkip = FindCardSelectionCancelOrSkip(page);
+        if (cancelOrSkip is null)
+        {
+            page.Context.LogInfo("移除选卡搜索结束，但没有可移除卡牌，也没有找到跳过或取消按钮。", "warning");
+            return false;
+        }
+
+        await ClickTextAsync(page, cancelOrSkip, "未找到可移除卡牌，取消本次选择", cancellationToken)
+            .ConfigureAwait(false);
+        page.State.PendingRemovedCardCount = 0;
+        page.State.PendingShopRemoval = false;
+        page.State.ResetCardSelectionSearch();
+        return true;
+    }
+
+    private static OcrTextLine? FindCardSelectionCancelOrSkip(ChaosModePage page)
+    {
+        var actionRegion = new RelativeRegion(0.495, 0.878, 0.997, 1.001);
+        return FindOcrBoxes(page, actionRegion)
+            .FirstOrDefault(line => ContainsAny(page, line, "跳过") || ContainsAny(page, line, "取消"));
+    }
+
+    private static void LogCardSelectionCandidates(
+        ChaosModePage page,
+        IReadOnlyList<ChaosCardInfo> cards)
+    {
+        var candidates = string.Join(
+            " | ",
+            cards.Select(card => $"「{card.Name}」[{card.Type}]"));
+        page.Context.LogDebug($"帧 #{page.FrameSequence} 移除选卡识别候选({cards.Count})：{candidates}");
+    }
+
+    private static async ValueTask ClickSelectedCardIndexesAsync(
+        ChaosModePage page,
+        IReadOnlyList<ChaosCardInfo> cards,
+        IReadOnlyList<int> indexes,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        foreach (var index in indexes)
+        {
+            if (index < 0 || index >= cards.Count)
+            {
+                continue;
+            }
+
+            var card = cards[index];
+            await ClickPointAsync(
+                    page,
+                    new RelativePoint(card.X, card.Y),
+                    $"{reason}，选择卡牌「{card.Name}」",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            page.State.PendingRemovedCardCount++;
+        }
+    }
+
+    private static async ValueTask ScrollCardSelectionPageAsync(
+        ChaosModePage page,
+        CancellationToken cancellationToken)
+    {
+        page.Context.LogInfo(
+            $"滚动卡牌列表：坐标({CardSelectionScrollPoint.X:0.000}, {CardSelectionScrollPoint.Y:0.000})，滚轮=-3。",
+            "activity");
+        await page.Context
+            .ScrollRelativeAsync(CardSelectionScrollPoint, -3, cancellationToken)
+            .ConfigureAwait(false);
+        page.MarkInputDispatched();
+    }
+
+    // Python handle_copy_card_choice (utils.py:3208)：复制卡牌选择页面。
+    private static async ValueTask<bool> HandleCopyCardChoiceAsync(
+        ChaosModePage page,
+        CancellationToken cancellationToken)
+    {
+        var prompt = FindBoxAtPoint(page, 0.498, 0.133);
+        if (prompt is null
+            || !ContainsAny(page, prompt, "请选择要复制的卡牌"))
+        {
+            return false;
+        }
+
+        page.Context.LogInfo("检测到复制卡牌选择页面", "activity");
+        page.State.CopyMemberAttemptIndex = 0;
+        page.State.CopyMemberCandidateClickedAt = default;
+        page.State.CopyMemberConfirmClickedAt = default;
+        var target = FindFeatureOne(
+            page,
+            "target",
+            new RelativeRegion(0.090, 0.179, 0.927, 0.342));
+        if (target is not null)
+        {
+            var targetX = Math.Clamp(target.CenterX(page.Frame.Width) - 0.0975, 0, 1);
+            var targetY = Math.Clamp(target.CenterY(page.Frame.Height) + 0.2460, 0, 1);
+            page.Context.LogInfo(
+                $"复制卡牌选择: 检测到 target 卡牌，点击位置 ({targetX:0.000}, {targetY:0.000})",
+                "activity");
+            await ClickPointAsync(
+                    page,
+                    new RelativePoint(targetX, targetY),
+                    "选择复制 target 卡牌",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+
+        var cards = page.Classification.Cards;
+        var priority = page.Context.Config.GetStringList("复制卡牌列表");
+        foreach (var priorityName in priority.Where(name => !string.IsNullOrWhiteSpace(name)))
+        {
+            foreach (var card in cards)
+            {
+                if (card.Name.Length == 0
+                    || !card.Name.Contains(priorityName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                page.Context.LogInfo(
+                    $"复制卡牌选择: 按优先级选择「{card.Name}」(匹配「{priorityName}」)",
+                    "activity");
+                await ClickPointAsync(
+                        page,
+                        new RelativePoint(card.X, card.Y),
+                        $"选择复制卡牌「{card.Name}」",
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                return true;
+            }
+        }
+
+        page.Context.LogInfo("复制卡牌选择: 未命中任何优先级，return False", "activity");
+        return false;
+    }
+
     // Python handle_copy_member (utils.py:3240)：按目标主战员头像优先选择复制对象。
     private static async ValueTask<bool> HandleCopyMemberAsync(
         ChaosModePage page,
@@ -744,12 +1009,38 @@ public sealed partial class ChaosModeTask
         }
 
         page.Context.LogInfo("检测到卡牌复制主战员选择事件，进行相应操作", "activity");
-        var clickPositions = PrioritizeTargetMemberClicks(page);
+        var clickPositions = PrioritizeTargetMemberClicks(page, out var targetMatched);
         var confirmRegion = new RelativeRegion(0.145, 0.044, 0.856, 0.214);
+        var now = page.Observation.CapturedAt == default
+            ? DateTimeOffset.UtcNow
+            : page.Observation.CapturedAt;
+        var activeConfirm = FindActiveFooterConfirmBox(page);
+        if (activeConfirm is not null)
+        {
+            if (page.State.CopyMemberConfirmClickedAt != default
+                && now - page.State.CopyMemberConfirmClickedAt < OwnedFooterConfirmationRetryInterval)
+            {
+                page.Context.LogDebug("复制主战员确认已下发，等待页面变化后再决定是否重试。");
+                return true;
+            }
+
+            page.State.CopyMemberAttemptIndex = 0;
+            page.State.CopyMemberCandidateClickedAt = default;
+            page.State.CopyMemberConfirmClickedAt = now;
+            await ClickFooterConfirmAsync(
+                    page,
+                    activeConfirm,
+                    "复制主战员确认",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+
         if (page.State.CopyMemberAttemptIndex > 0
             && FindFeatureOne(page, "copymemberconfirm", confirmRegion) is not null)
         {
             page.State.CopyMemberAttemptIndex = 0;
+            page.State.CopyMemberCandidateClickedAt = default;
             page.Context.LogInfo("已出现 copymemberconfirm，等待后续确认处理。", "activity");
             return true;
         }
@@ -757,19 +1048,36 @@ public sealed partial class ChaosModeTask
         if (clickPositions.Count == 0)
         {
             page.State.CopyMemberAttemptIndex = 0;
+            page.State.CopyMemberCandidateClickedAt = default;
             return true;
         }
 
         var attemptIndex = page.State.CopyMemberAttemptIndex;
+        if (attemptIndex > 0
+            && page.State.CopyMemberCandidateClickedAt != default
+            && now - page.State.CopyMemberCandidateClickedAt < OwnedFooterConfirmationRetryInterval)
+        {
+            page.Context.LogDebug("复制主战员选择已下发，等待确认特征，不切换候选人。");
+            return true;
+        }
+
+        if (targetMatched && attemptIndex > 0)
+        {
+            attemptIndex = 0;
+            page.State.CopyMemberAttemptIndex = 0;
+        }
+
         if (attemptIndex < 0 || attemptIndex >= clickPositions.Count)
         {
             page.State.CopyMemberAttemptIndex = 0;
+            page.State.CopyMemberCandidateClickedAt = default;
             page.Context.LogInfo("所有复制主战员位置均已尝试，等待页面变化。", "warning");
             return true;
         }
 
         var position = clickPositions[attemptIndex];
         page.State.CopyMemberAttemptIndex = attemptIndex + 1;
+        page.State.CopyMemberCandidateClickedAt = now;
         page.Context.LogInfo($"点击位置 ({position.X:0.000}, {position.Y:0.000})", "activity");
         await ClickPointAsync(
                 page,
@@ -780,7 +1088,9 @@ public sealed partial class ChaosModeTask
         return true;
     }
 
-    private static IReadOnlyList<RelativePoint> PrioritizeTargetMemberClicks(ChaosModePage page)
+    private static IReadOnlyList<RelativePoint> PrioritizeTargetMemberClicks(
+        ChaosModePage page,
+        out bool targetMatched)
     {
         var defaults = new[]
         {
@@ -795,6 +1105,7 @@ public sealed partial class ChaosModeTask
             0.35);
         if (target is null)
         {
+            targetMatched = false;
             page.Context.LogInfo(
                 "刷存档主战员头像匹配跳过：未找到 target_member_large，保持原主战员点击顺序");
             return defaults;
@@ -807,6 +1118,7 @@ public sealed partial class ChaosModeTask
                 Math.Pow(position.X - targetX, 2)
                 + Math.Pow(position.Y - targetY, 2))
             .First();
+        targetMatched = true;
         page.Context.LogInfo(
             $"刷存档主战员头像匹配成功，相似度={target.Confidence:0.0000}，优先绑定点击位置（{preferred.X:0.000}, {preferred.Y:0.000}）",
             "activity");

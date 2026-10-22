@@ -7,7 +7,6 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Rectangle = System.Windows.Shapes.Rectangle;
-using Automation.Core.DeveloperTools;
 using Automation.Core.Frames;
 using Automation.Core.Vision;
 using Automation.Vision.Onnx;
@@ -37,7 +36,6 @@ public partial class DeveloperPreviewWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        SnapshotPageTypeBox.ItemsSource = DecisionSnapshotCatalog.All;
         UpdateImageLayout();
         ResizeWindowToContent();
         await InitializeOcrAsync();
@@ -203,46 +201,6 @@ public partial class DeveloperPreviewWindow : Window
     {
         ClearSelection();
         e.Handled = true;
-    }
-
-    private async void CaptureDecisionSnapshotButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryGetSourceFrame(out var frame))
-        {
-            DecisionSnapshotStatusText.Text = "没有可用于标注的当前帧。";
-            return;
-        }
-
-        var definition = SnapshotPageTypeBox.SelectedItem as DecisionSnapshotDefinition;
-        if (definition is null)
-        {
-            DecisionSnapshotStatusText.Text = "请选择当前画面类型。";
-            return;
-        }
-
-        DecisionSnapshotStatusText.Text = "正在执行全屏 OCR 并生成标注样本...";
-        OcrFrameResult? ocr = null;
-        var ocrEngine = _ocrEngine;
-        if (ocrEngine is not null)
-        {
-            try
-            {
-                ocr = await Task.Run(() => ocrEngine.Recognize(frame));
-                DrawOcrBoxes(ocr.Lines, 0, 0);
-                OcrStatusText.Text = $"全屏 OCR 完成：{ocr.Lines.Count} 行。";
-            }
-            catch (Exception exception)
-            {
-                OcrStatusText.Text = $"全屏 OCR 失败，将只保存图像和 ROI：{exception.Message}";
-            }
-        }
-
-        var directory = await _viewModel.CaptureDeveloperDecisionSnapshotAsync(
-            definition.ReasonId,
-            ocr);
-        DecisionSnapshotStatusText.Text = directory is null
-            ? "标注样本生成失败，请查看开发日志。"
-            : $"标注样本已保存：{directory}";
     }
 
     private void SaveCropButton_Click(object sender, RoutedEventArgs e)

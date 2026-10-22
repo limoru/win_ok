@@ -67,6 +67,14 @@ public sealed partial class ChaosModeTask
             new RelativeRegion(0.394, 0.779, 0.600, 0.858));
         if (attack is not null)
         {
+            var requestedAt = ResolveOperationTimestamp(page);
+            if (!page.State.BattleEvent.TryBeginStartAttack(requestedAt))
+            {
+                page.Context.LogDebug(
+                    "发起攻击已经点击过，忽略战斗预览残留帧，等待战斗状态变化。");
+                return true;
+            }
+
             page.Context.LogInfo(
                 $"战斗页面检测到start_attack_event特征，相似度={attack.Confidence:0.0000}，点击发起攻击。",
                 "activity");

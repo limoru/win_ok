@@ -6,4 +6,7 @@ public sealed record FrameRoute<TFrame>(
     Func<TFrame, bool> Matches,
     Func<TFrame, CancellationToken, ValueTask<bool>> HandleAsync,
     bool UseActionBoundary = true,
-    bool AllowFallbackWhenUnhandled = false);
+    bool AllowFallbackWhenUnhandled = false,
+    bool ExpectsCenterConfirmation = false,
+    Func<TFrame, int>? ActionRetryAfterFrames = null,
+    bool IsPriorityOverlay = false);

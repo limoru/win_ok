@@ -30,7 +30,10 @@ public sealed class TaskContext
         IFeatureMatcher? featureMatcher = null,
         IRuntimeFeatureTemplateStore? runtimeFeatureTemplates = null,
         IDecisionSnapshotSink? decisionSnapshots = null,
-        ITaskStopRequestSink? stopRequestSink = null)
+        ITaskStopRequestSink? stopRequestSink = null,
+        ITaskPauseRequestSink? pauseRequestSink = null,
+        IFrameSampleArchiveSink? frameSamples = null,
+        string? runId = null)
     {
         if (string.IsNullOrWhiteSpace(sessionId))
         {
@@ -51,6 +54,9 @@ public sealed class TaskContext
         RuntimeFeatureTemplates = runtimeFeatureTemplates;
         DecisionSnapshots = decisionSnapshots;
         StopRequestSink = stopRequestSink;
+        PauseRequestSink = pauseRequestSink;
+        FrameSamples = frameSamples;
+        RunId = string.IsNullOrWhiteSpace(runId) ? sessionId : runId;
     }
 
     public string SessionId { get; }
@@ -73,6 +79,9 @@ public sealed class TaskContext
     public IRuntimeFeatureTemplateStore? RuntimeFeatureTemplates { get; }
     public IDecisionSnapshotSink? DecisionSnapshots { get; }
     public ITaskStopRequestSink? StopRequestSink { get; }
+    public ITaskPauseRequestSink? PauseRequestSink { get; }
+    public IFrameSampleArchiveSink? FrameSamples { get; }
+    public string RunId { get; }
 
     public T GetTaskConfig<T>(string key, T fallback)
         => Config.Get(key, fallback);
@@ -88,6 +97,18 @@ public sealed class TaskContext
 
         StopRequestSink.RequestStop(SessionId, reason.Trim());
         return true;
+    }
+
+    public bool RequestPause(string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        if (PauseRequestSink is null)
+        {
+            LogInfo("当前会话没有配置暂停请求接收器，无法暂停任务。", "warning");
+            return false;
+        }
+
+        return PauseRequestSink.RequestPause(SessionId, reason.Trim());
     }
 
     public ValueTask<FrameLease> GetLatestFrameAsync(CancellationToken cancellationToken = default)
@@ -136,14 +157,6 @@ public sealed class TaskContext
         MarkInputCompleted();
     }
 
-    public async ValueTask HoverClickRelativeAsync(
-        RelativePoint point,
-        CancellationToken cancellationToken = default)
-    {
-        await Input.HoverClickAsync(point.Clamp(), cancellationToken).ConfigureAwait(false);
-        MarkInputCompleted();
-    }
-
     public async ValueTask SwipeRelativeAsync(
         RelativePoint from,
         RelativePoint to,
@@ -153,6 +166,15 @@ public sealed class TaskContext
         await Input
             .SwipeAsync(from.Clamp(), to.Clamp(), duration, cancellationToken)
             .ConfigureAwait(false);
+        MarkInputCompleted();
+    }
+
+    public async ValueTask ScrollRelativeAsync(
+        RelativePoint point,
+        int wheelNotches,
+        CancellationToken cancellationToken = default)
+    {
+        await Input.ScrollAsync(point.Clamp(), wheelNotches, cancellationToken).ConfigureAwait(false);
         MarkInputCompleted();
     }
 
@@ -197,6 +219,9 @@ public sealed class TaskContext
 
         LogSink?.Log(SessionId, message, tag);
     }
+
+    public void LogDebug(string message)
+        => LogInfo(message, "debug");
 
     public IReadOnlyList<string> GetRecentLogs()
     {

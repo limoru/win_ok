@@ -49,7 +49,7 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
     private DateTimeOffset _lastActivity = DateTimeOffset.Now;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly Func<ITargetProvider> _targetProviderFactory;
-    private readonly IDecisionSnapshotSink? _decisionSnapshots;
+    private readonly IFrameSampleArchiveSink? _frameSamples;
     private readonly TaskConfigProfileStore _configProfileStore;
     private readonly ITaskModuleCatalog _taskModuleCatalog;
     private readonly TaskPlanResolver _taskPlanResolver;
@@ -77,7 +77,7 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
         TaskConfigProfileStore configProfileStore,
         ITaskModuleCatalog? taskModuleCatalog = null,
         TimeSpan? taskPollInterval = null,
-        IDecisionSnapshotSink? decisionSnapshots = null)
+        IFrameSampleArchiveSink? frameSamples = null)
     {
         SessionId = sessionId;
         Binding = binding;
@@ -87,7 +87,7 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
             ?? throw new ArgumentNullException(nameof(targetProviderFactory));
         _configProfileStore = configProfileStore
             ?? throw new ArgumentNullException(nameof(configProfileStore));
-        _decisionSnapshots = decisionSnapshots;
+        _frameSamples = frameSamples;
         _taskModuleCatalog = taskModuleCatalog ?? TaskModuleCatalog.Instance;
         _taskPlanResolver = new TaskPlanResolver(_taskModuleCatalog);
         TaskModules = _taskModuleCatalog.GetDescriptors()
@@ -386,19 +386,13 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
 
     public void Pause()
     {
-        if (State == SessionState.Running)
+        if (State != SessionState.Running)
         {
-            _taskCoordinator?.Pause();
-            State = SessionState.Paused;
-            ReportActivity(Activity with
-            {
-                Kind = SessionActivityKind.Paused,
-                StepLabel = "已暂停",
-                Detail = "等待恢复运行",
-                UpdatedAt = DateTimeOffset.Now
-            });
-            UpdateMessage("会话已暂停");
+            return;
         }
+
+        _taskCoordinator?.Pause();
+        MarkPaused("会话已暂停");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -430,7 +424,10 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
             }
 
             runCancellation?.Dispose();
-            coordinator?.Dispose();
+            if (coordinator is not null)
+            {
+                await coordinator.DisposeAsync().ConfigureAwait(true);
+            }
 
             if (target is not null)
             {
@@ -452,6 +449,7 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
     private void StartTaskLoop(ITargetSession target)
     {
         var generation = Interlocked.Increment(ref _taskRunGeneration);
+        var runId = $"{SessionId}-{generation}-{DateTimeOffset.Now:yyyyMMddHHmmssfff}";
         var resolution = _taskPlanResolver.Resolve(_taskPlan, UiProfile);
         if (!resolution.IsValid || resolution.Plan is null)
         {
@@ -478,8 +476,11 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
             HasSelectedChaosModeTask ? ChaosModeConfigSchema.Instance : null,
             HasSelectedChaosModeTask ? _featureMatcher.Value : null,
             runtimeFeatureTemplates,
-            _decisionSnapshots,
-            new TaskStopRequestSink(this, generation));
+            decisionSnapshots: null,
+            stopRequestSink: new TaskStopRequestSink(this, generation),
+            pauseRequestSink: new TaskPauseRequestSink(this, generation),
+            frameSamples: _frameSamples,
+            runId: runId);
         var coordinator = new SessionTaskCoordinator(
             resolution.Plan.Modules,
             context,
@@ -572,6 +573,28 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
         synchronizationContext.Post(_ => action(), null);
     }
 
+    private void MarkPaused(string message)
+    {
+        State = SessionState.Paused;
+        ReportActivity(Activity with
+        {
+            Kind = SessionActivityKind.Paused,
+            StepLabel = "已暂停",
+            Detail = "等待恢复运行",
+            UpdatedAt = DateTimeOffset.Now
+        });
+        UpdateMessage(message);
+    }
+
+    private void MarkPausedFromTask(int generation, string reason)
+    {
+        if (generation == Volatile.Read(ref _taskRunGeneration)
+            && State == SessionState.Running)
+        {
+            MarkPaused(reason);
+        }
+    }
+
     private async Task StopFromTaskRequestAsync(int generation, string reason)
     {
         if (generation != Volatile.Read(ref _taskRunGeneration))
@@ -658,7 +681,9 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
         return new TaskConfigProfileRuntimeTemplateStore(
             _configProfileStore,
             SelectedChaosModeProfile,
-            $"{SelectedChaosModeProfile.Id}|{targetName.Trim()}");
+            TaskConfigProfileRuntimeTemplateStore.CreateScope(
+                SelectedChaosModeProfile.Id,
+                targetName));
     }
 
     private static IOcrProvider? CreateSharedOcrProvider()
@@ -710,6 +735,29 @@ public sealed class SessionViewModel : ObservableObject, IAsyncDisposable, ITask
     {
         public void Report(SessionActivity activity)
             => owner.ReportTaskActivity(generation, activity);
+    }
+
+    private sealed class TaskPauseRequestSink(
+        SessionViewModel owner,
+        int generation) : ITaskPauseRequestSink
+    {
+        public bool RequestPause(string sessionId, string reason)
+        {
+            if (generation != Volatile.Read(ref owner._taskRunGeneration))
+            {
+                return false;
+            }
+
+            var coordinator = owner._taskCoordinator;
+            if (coordinator is null)
+            {
+                return false;
+            }
+
+            coordinator.Pause();
+            owner.PostToUi(() => owner.MarkPausedFromTask(generation, reason));
+            return true;
+        }
     }
 
     private sealed class TaskStopRequestSink(

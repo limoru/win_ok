@@ -22,6 +22,17 @@ internal sealed class ChaosCommandBus
         }
     }
 
+    public bool HasPendingEscape
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _commands.Count > 0 && _commands.Peek() is EscapeCommand;
+            }
+        }
+    }
+
     public bool TryConsumeEscape(out EscapeCommand? command)
     {
         lock (_gate)

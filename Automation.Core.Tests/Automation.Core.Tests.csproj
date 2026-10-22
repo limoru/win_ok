@@ -22,17 +22,14 @@
     <ProjectReference Include="..\Automation.Core\Automation.Core.csproj" />
     <ProjectReference Include="..\Kes.Tasks\Kes.Tasks.csproj" />
     <ProjectReference Include="..\Automation.Vision.Onnx\Automation.Vision.Onnx.csproj" />
+    <ProjectReference Include="..\Automation.MemoryProbe\Automation.MemoryProbe.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="TestAssets\FrameBus\flash-effect-selection.png"
-          CopyToOutputDirectory="PreserveNewest" />
-    <None Update="TestAssets\FrameBus\remove-card-selection.png"
-          CopyToOutputDirectory="PreserveNewest" />
-    <None Update="TestAssets\FrameBus\remove-card-selection-after-card-selected.png"
-          CopyToOutputDirectory="PreserveNewest" />
-    <None Update="TestAssets\FrameBus\main-member-flash-confirm-inactive.png"
-          CopyToOutputDirectory="PreserveNewest" />
+    <None Update="TestAssets\FrameBus\flash-effect-selection.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="TestAssets\FrameBus\remove-card-selection.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="TestAssets\FrameBus\remove-card-selection-after-card-selected.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="TestAssets\FrameBus\main-member-flash-confirm-inactive.png" CopyToOutputDirectory="PreserveNewest" />
 
   </ItemGroup>
 </Project>

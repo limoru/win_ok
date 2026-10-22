@@ -21,8 +21,16 @@ public sealed partial class ChaosModeTask : ITaskModule
     private const string CardAssignmentSkipActionKey = "card-assignment-skip";
     private const string ConvertInactiveActionKey = "convert-inactive";
     private const string FlashEffectCardsActionKey = "flash-effect-cards";
+    private const string EquipmentInstallTransitionActionKey = "equipment-install-transition";
+    private const string EquipmentInstallConfirmWaitActionKey = "equipment-install-confirm-wait";
+    private const int PageActionMaxAttempts = 3;
 
     private static readonly TimeSpan FrameWaitTimeout = TimeSpan.FromSeconds(2);
+    private static readonly RelativeRegion CenterConfirmationProbeRegion =
+        new(0.009, 0.168, 0.977, 0.875);
+    private static readonly RelativePoint FooterConfirmButtonHotspot =
+        new(0.921, 0.931);
+    private const string CenterConfirmationProbeId = "center-confirmation";
 
     private static async ValueTask HandleRecognitionFailureAsync(
         ChaosModePage page,
@@ -112,18 +120,9 @@ public sealed partial class ChaosModeTask : ITaskModule
     // 处理顺序整体对齐 Python 版 utils_chaos.PAGE_HANDLERS，括号里的编号是
     // Python PAGE_HANDLERS 中的下标。事件页必须先于通用文字按钮处理，避免
     // OCR 把事件描述里的“确认”拆成独立文本框后误点中央区域。
-    private static readonly (string Name, FeatureSearchRegion? TargetRegion)[] TargetMemberRuntimeFeatures =
-    [
-        ("target_member", null),
-        ("target_member_small", new FeatureSearchRegion(0.534, 0.225, 0.587125, 0.316667)),
-        ("target_member_in_select_card", new FeatureSearchRegion(0.117708333, 0.178703704, 0.175520833, 0.278703704)),
-        ("target_member_tiny", new FeatureSearchRegion(0.65790625, 0.470962963, 0.70009375, 0.545037037)),
-        ("target_member_in_mask_card", new FeatureSearchRegion(0.663635417, 0.481148148, 0.694364583, 0.534851852)),
-        ("target_member_large", new FeatureSearchRegion(0.218, 0.320, 0.28675, 0.439444444))
-    ];
-
     private readonly ChaosRunState _state = new();
     private readonly FullFrameOcrAnalyzer _frameOcrAnalyzer = new();
+    private readonly RegionOcrAnalyzer _regionOcrAnalyzer = new();
     private readonly SessionEventBus _eventBus = new();
     private readonly ActionArbiter _actionArbiter = new();
     private readonly ChaosCommandBus _commandBus = new();
@@ -131,13 +130,46 @@ public sealed partial class ChaosModeTask : ITaskModule
     private readonly TargetMemberArchiveFlow _targetMemberArchiveFlow;
     private readonly bool _useFrameDispatchBus;
     private readonly object _frameDispatchBusGate = new();
+    private readonly SemaphoreSlim _frameActionGate = new(1, 1);
     private FrameDispatchBus<ChaosModePage>? _frameDispatchBus;
     private long _lastSequence;
+    private long _lastSerializedFrameSequence = -1;
+    private long _lastSampleFrameSequence;
+    private int _disposed;
+    private int _confirmationProbeArmed;
+    private bool _lastProbeHitCenterConfirmation;
+    private int _confirmationProbeMisses;
+
+    private void AdvanceLastSequence(long sequence)
+        => AdvanceSequence(ref _lastSequence, sequence);
+
+    private void ArmCenterConfirmationProbe()
+    {
+        if (Interlocked.CompareExchange(ref _confirmationProbeArmed, 1, 0) == 0)
+        {
+            Interlocked.Exchange(ref _confirmationProbeMisses, 0);
+        }
+    }
+
+    internal static void AdvanceSequence(ref long target, long sequence)
+    {
+        long current;
+        do
+        {
+            current = Volatile.Read(ref target);
+            if (sequence <= current)
+            {
+                return;
+            }
+        }
+        while (Interlocked.CompareExchange(ref target, sequence, current) != current);
+    }
     private bool _waitingReported;
     private bool _runtimeFeatureTemplatesInitialized;
     private DateTimeOffset _lastPerformanceLogAt = DateTimeOffset.MinValue;
     private string _lastUnhandledPageSignature = string.Empty;
     private DateTimeOffset _lastUnhandledPageLogAt = DateTimeOffset.MinValue;
+    private static readonly TimeSpan RestConfirmationTimeout = TimeSpan.FromSeconds(5);
 
     public ChaosModeTask(
         TimeSpan? targetMemberArchiveTimeout = null,
@@ -146,6 +178,28 @@ public sealed partial class ChaosModeTask : ITaskModule
         _useFrameDispatchBus = useFrameDispatchBus;
         _targetMemberArchiveFlow = new TargetMemberArchiveFlow(
             targetMemberArchiveTimeout ?? TimeSpan.FromSeconds(8));
+    }
+
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        FrameDispatchBus<ChaosModePage>? bus;
+        lock (_frameDispatchBusGate)
+        {
+            bus = _frameDispatchBus;
+            _frameDispatchBus = null;
+        }
+
+        if (bus is not null)
+        {
+            await bus.DisposeAsync().ConfigureAwait(false);
+        }
+
+        _frameActionGate.Dispose();
     }
 
     public string ModuleId => "ChaosMode";
@@ -182,10 +236,10 @@ public sealed partial class ChaosModeTask : ITaskModule
         FrameLease frameLease;
         try
         {
-            frameLease = _lastSequence == 0
+            frameLease = Volatile.Read(ref _lastSequence) == 0
                 ? await context.GetLatestFrameAsync(cancellationToken).ConfigureAwait(false)
                 : await context
-                    .GetNextFrameAsync(_lastSequence, FrameWaitTimeout, cancellationToken)
+                    .GetNextFrameAsync(Volatile.Read(ref _lastSequence), FrameWaitTimeout, cancellationToken)
                     .ConfigureAwait(false);
         }
         catch (TimeoutException)
@@ -227,7 +281,7 @@ public sealed partial class ChaosModeTask : ITaskModule
                 _eventBus);
             var recognized = analysis.Recognition;
             var ocrMs = Stopwatch.GetElapsedTime(ocrStarted).TotalMilliseconds;
-            _lastSequence = frameLease.Sequence;
+            AdvanceLastSequence(frameLease.Sequence);
             var page = new ChaosModePage(
                 context,
                 bgraFrameLease.Frame,
@@ -236,7 +290,8 @@ public sealed partial class ChaosModeTask : ITaskModule
                 _state,
                 _actionArbiter,
                 _commandBus,
-                frameLease);
+                frameLease,
+                ArmCenterConfirmationProbe);
 
             var centerConfirmation = FindCenterConfirmation(page);
             var frameObservation = PageObservation.FromOcr(
@@ -248,31 +303,46 @@ public sealed partial class ChaosModeTask : ITaskModule
                 centerConfirmation?.Point,
                 frameLease.CapturedAt);
             page.Observation = frameObservation;
-            var observedRoute = _targetMemberArchiveFlow.IsActive
+            ObserveEquipmentInstallLifecycle(page);
+            IReadOnlyList<FrameRoute<ChaosModePage>> observedRoutes =
+                _targetMemberArchiveFlow.IsActive
+                    ? []
+                    : _frameRouter.ResolveCandidates(page);
+            page.Observation = page.Observation with
+            {
+                RouteIds = observedRoutes.Select(route => route.Id).ToArray()
+            };
+            var observedRoute = observedRoutes.FirstOrDefault();
+            var observedActionKey = observedRoute is null
                 ? null
-                : _frameRouter.Resolve(page);
-            var observationDecision = _actionArbiter.ObservePage(frameObservation, observedRoute?.Id);
+                : ResolveActionBoundaryKey(observedRoute.Id, page);
+            var observationDecision = _actionArbiter.ObservePage(
+                page.Observation,
+                observedActionKey);
             if (observationDecision.Kind == ActionDecisionKind.SuppressDuplicate)
             {
-                context.LogInfo(observationDecision.Reason, "activity");
-                return true;
+                context.LogDebug(
+                    $"继续处理帧 #{page.FrameSequence}；页面观察未释放动作权，由消费者决定等待或重试。");
             }
-
 
             var handlersStarted = Stopwatch.GetTimestamp();
             var handled = false;
             if (_targetMemberArchiveFlow.IsActive)
             {
-                handled = await HandleTargetMemberArchiveAsync(page, cancellationToken).ConfigureAwait(false);
+                handled = await TryHandlePriorityOverlayAsync(page, cancellationToken).ConfigureAwait(false);
+                if (!handled)
+                {
+                    handled = await HandleTargetMemberArchiveAsync(page, cancellationToken).ConfigureAwait(false);
+                }
             }
             else
             {
                 handled = await HandlePageAsync(page, cancellationToken).ConfigureAwait(false);
             }
 
-            if (handled)
+            if (handled == false)
             {
-                _lastSequence = Math.Max(_lastSequence, page.FrameSequence);
+                AdvanceLastSequence(page.FrameSequence);
                 _lastUnhandledPageSignature = string.Empty;
                 _lastUnhandledPageLogAt = DateTimeOffset.MinValue;
             }
@@ -284,7 +354,16 @@ public sealed partial class ChaosModeTask : ITaskModule
                 ReportUnhandledPage(context, recognized);
             }
 
-            ReportSlowFrame(context, frameWaitMs, ocrMs, handlersMs, totalMs);
+            ReportSlowFrame(
+                context,
+                frameWaitMs,
+                ocrMs,
+                handlersMs,
+                0,
+                0,
+                0,
+                0,
+                totalMs);
             return handled;
         }
     }
@@ -310,9 +389,16 @@ public sealed partial class ChaosModeTask : ITaskModule
         }
 
         var loaded = 0;
-        foreach (var runtimeFeature in TargetMemberRuntimeFeatures)
+        var avatarVariants = 0;
+        foreach (var runtimeFeature in TargetMemberAvatarCatalog.Features)
         {
-            foreach (var template in store.Load(runtimeFeature.Name))
+            var templates = store.Load(runtimeFeature.Name);
+            if (runtimeFeature.Name == TargetMemberAvatarCatalog.BaseFeatureName)
+            {
+                avatarVariants = templates.Count;
+            }
+
+            foreach (var template in templates)
             {
                 matcher.RegisterRuntimeTemplate(runtimeFeature.Name, template);
                 loaded++;
@@ -324,8 +410,17 @@ public sealed partial class ChaosModeTask : ITaskModule
             return;
         }
 
+        if (avatarVariants > 0)
+        {
+            _state.SaveTargetMember = true;
+            context.LogInfo(
+                $"已从任务方案加载主战员「{targetName}」的头像变体 {avatarVariants} 个（模板 {loaded} 项），本轮跳过主界面头像确认。",
+                "activity");
+            return;
+        }
+
         context.LogInfo(
-            $"已从任务方案加载主战员「{targetName}」头像候选（{loaded}项），将进入主战员页校验槽位。",
+            $"已从任务方案加载主战员「{targetName}」的头像候选（{loaded} 项），缺少基础头像，仍需进入主界面确认。",
             "activity");
     }
 
@@ -369,9 +464,19 @@ public sealed partial class ChaosModeTask : ITaskModule
         double frameWaitMs,
         double ocrMs,
         double handlersMs,
+        double routeMs,
+        double sampleCreateMs,
+        double archiveMs,
+        double publishMs,
         double totalMs)
     {
-        if (frameWaitMs < 250 && ocrMs < 300 && handlersMs < 300 && totalMs < 800)
+        if (frameWaitMs < 250
+            && ocrMs < 300
+            && handlersMs < 300
+            && routeMs < 300
+            && sampleCreateMs < 100
+            && archiveMs < 100
+            && totalMs < 800)
         {
             return;
         }
@@ -383,7 +488,7 @@ public sealed partial class ChaosModeTask : ITaskModule
         }
 
         _lastPerformanceLogAt = now;
-        context.LogInfo($"性能: 等帧 {frameWaitMs:0} ms，OCR {ocrMs:0} ms，处理器 {handlersMs:0} ms，总 {totalMs:0} ms。", "performance");
+        context.LogInfo($"[performance] wait={frameWaitMs:0}ms ocr={ocrMs:0}ms route={routeMs:0}ms sample={sampleCreateMs:0}ms archive={archiveMs:0}ms publish={publishMs:0}ms total={totalMs:0}ms", "performance");
     }
 
     private static async ValueTask CaptureDecisionSnapshotAsync(
@@ -552,6 +657,13 @@ public sealed partial class ChaosModeTask : ITaskModule
         {
             await ExecuteInputCommandAsync(page, decision.Command, cancellationToken)
                 .ConfigureAwait(false);
+            if (page.State.AwaitingRestConfirmation)
+            {
+                page.State.FlashOrRest = false;
+                page.State.AwaitingRestConfirmation = false;
+                page.State.RestConfirmationStartedAt = default;
+            }
+
             return true;
         }
 
@@ -565,12 +677,25 @@ public sealed partial class ChaosModeTask : ITaskModule
     }
     private static CenterConfirmation? FindCenterConfirmation(ChaosModePage page)
     {
-        var line = FindText(
-            page,
-            new RelativeRegion(0.009, 0.168, 0.977, 0.875),
-            GameText(page, "确认"));
+        var region = CenterConfirmationProbeRegion;
+        var line = FindText(page, region, GameText(page, "确认"));
         if (line is null)
         {
+            return null;
+        }
+
+        var cancel = FindText(page, region, GameText(page, "取消"));
+        if (cancel is null)
+        {
+            page.Context.LogDebug("检测到孤立的“确认”文字但没有同一行的“取消”按钮，不按中心确认弹窗处理。");
+            return null;
+        }
+
+        var confirmY = (line.Region.Y + (line.Region.Height / 2d)) / page.Frame.Height;
+        var cancelY = (cancel.Region.Y + (cancel.Region.Height / 2d)) / page.Frame.Height;
+        if (Math.Abs(confirmY - cancelY) > 0.08)
+        {
+            page.Context.LogDebug("“确认”和“取消”不在同一按钮行，不按中心确认弹窗处理。");
             return null;
         }
 
@@ -591,10 +716,7 @@ public sealed partial class ChaosModeTask : ITaskModule
         ChaosModePage page,
         CancellationToken cancellationToken)
     {
-        var line = FindText(
-            page,
-            new RelativeRegion(0.267, 0.867, 0.991, 0.979),
-            GameText(page, "确认"));
+        var line = FindFooterConfirmBox(page);
         if (line is null)
         {
             return false;
@@ -606,9 +728,37 @@ public sealed partial class ChaosModeTask : ITaskModule
             return false;
         }
 
-        await ClickTextAsync(page, line, "检测到确认按钮", cancellationToken)
+        await ClickFooterConfirmAsync(page, line, "检测到确认按钮", cancellationToken)
             .ConfigureAwait(false);
         return true;
+    }
+
+    private static OcrTextLine? FindActiveFooterConfirmBox(ChaosModePage page)
+    {
+        var line = FindFooterConfirmBox(page);
+        return line is not null && IsButtonActive(page.Frame, line) ? line : null;
+    }
+
+    private static async ValueTask ClickFooterConfirmAsync(
+        ChaosModePage page,
+        OcrTextLine line,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        var ocrCenter = new RelativePoint(
+            (line.Region.X + (line.Region.Width / 2d)) / page.Frame.Width,
+            (line.Region.Y + (line.Region.Height / 2d)) / page.Frame.Height).Clamp();
+        var clickPoint = ocrCenter.X >= 0.85 && ocrCenter.Y >= 0.90
+            ? FooterConfirmButtonHotspot
+            : ocrCenter;
+        if (clickPoint != ocrCenter)
+        {
+            page.Context.LogDebug(
+                $"确认按钮 OCR 中心=({ocrCenter.X:0.000}, {ocrCenter.Y:0.000})，使用底部确认控件稳定热点 ({clickPoint.X:0.000}, {clickPoint.Y:0.000})。");
+        }
+
+        await ClickPointAsync(page, clickPoint, message, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     // Python handle_leave (utils.py:4286)：右下角"离开"按钮，灰色禁用时不点。
@@ -678,6 +828,7 @@ public sealed partial class ChaosModeTask : ITaskModule
                 "检测到结算按钮",
                 cancellationToken)
             .ConfigureAwait(false);
+        page.State.BattleEvent.Complete();
         // 对应 Python：结算页若已标记 reach_final_boss，说明刚通关底，层数 +1 并重置层状态。
         if (page.State.ReachFinalBoss)
         {
@@ -691,6 +842,134 @@ public sealed partial class ChaosModeTask : ITaskModule
         return true;
     }
 
+    // Python handle_chaos_reward_settlement (utils_chaos.py:1009)：卡厄思奖励结算页。
+    // 默认不领取奖励时，改由 _finish_only_first_layer 判断是否退出重刷/结束第一层。
+    private static async ValueTask<bool> HandleChaosRewardSettlementAsync(
+        ChaosModePage page,
+        CancellationToken cancellationToken)
+    {
+        var title = FindBoxAtPoint(page, 0.552, 0.067);
+        if (title is null || !ContainsAny(page, title, "结算"))
+        {
+            return false;
+        }
+
+        page.Context.LogInfo("检测到卡厄思奖励结算页面", "activity");
+
+        if (!page.Context.GetTaskConfig("领取奖励(只使用验证卡)", false))
+        {
+            page.Context.LogInfo("领取奖励(只使用验证卡)配置为False", "activity");
+            return page.State.IsEscaped
+                ? false
+                : await TryFinishOnlyFirstLayerAsync(page, cancellationToken).ConfigureAwait(false);
+        }
+
+        var reward = FindBoxAtPoint(page, 0.851, 0.389);
+        if (reward is null || !ContainsAny(page, reward, "获得"))
+        {
+            page.Context.LogInfo("未检测到获得按钮", "activity");
+            return page.State.IsEscaped
+                ? false
+                : await TryFinishOnlyFirstLayerAsync(page, cancellationToken).ConfigureAwait(false);
+        }
+
+        page.Context.LogInfo("检测到获得按钮，点击获得", "activity");
+        await ClickTextAsync(page, reward, "领取卡厄思奖励", cancellationToken)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    // Python handle_chaos_reward_claim (utils_chaos.py:971)：卡厄思奖励领取页。
+    private static async ValueTask<bool> HandleChaosRewardClaimAsync(
+        ChaosModePage page,
+        CancellationToken cancellationToken)
+    {
+        if (IsFlashEffectPage(page))
+        {
+            return false;
+        }
+
+        var claim = FindBoxAtPoint(page, 0.568, 0.711);
+        if (claim is null || !ContainsAny(page, claim, "获得"))
+        {
+            return false;
+        }
+
+        page.Context.LogInfo("检测到卡厄思模式奖励领取页面", "activity");
+        var verify = FindBoxAtPoint(page, 0.959, 0.281);
+        var verifyMatch = verify is null
+            ? Match.Empty
+            : Regex.Match(verify.Text, @"(\d+)/(\d+)", RegexOptions.CultureInvariant);
+        if (verifyMatch.Success
+            && int.TryParse(verifyMatch.Groups[1].Value, out var currentCards)
+            && int.TryParse(verifyMatch.Groups[2].Value, out var maxCards))
+        {
+            page.Context.LogInfo($"战利品验证卡: {currentCards}/{maxCards}", "activity");
+            if (currentCards > 0)
+            {
+                page.Context.LogInfo($"当前战利品验证卡{currentCards}>0，点击获得", "activity");
+                await ClickTextAsync(page, claim, "领取卡厄思战利品", cancellationToken)
+                    .ConfigureAwait(false);
+                return true;
+            }
+
+            page.Context.LogInfo("当前战利品验证卡为0，点击取消", "activity");
+        }
+        else
+        {
+            page.Context.LogInfo("未检测到战利品验证卡信息，点击取消", "activity");
+        }
+
+        await ClickPointAsync(
+                page,
+                new RelativePoint(0.352, 0.708),
+                "取消领取卡厄思战利品",
+                cancellationToken)
+            .ConfigureAwait(false);
+        return true;
+    }
+
+    // Python _finish_only_first_layer (utils.py:5408)：只打第一层的统一退出判断。
+    private static async ValueTask<bool> TryFinishOnlyFirstLayerAsync(
+        ChaosModePage page,
+        CancellationToken cancellationToken)
+    {
+        if (page.State.PassFinalBossCount < 1)
+        {
+            return false;
+        }
+
+        if (page.Context.GetTaskConfig("首层刷特定闪光", false)
+            && !page.State.GetSpecificFlash)
+        {
+            page.State.SuccessRounds++;
+            page.Context.LogInfo("未刷到指定闪光且已通关第一层，退出重刷", "activity");
+            await ClickPointAsync(
+                    page,
+                    new RelativePoint(0.959, 0.051),
+                    "退出第一层重新刷取特定闪光",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+
+        if (page.Context.GetTaskConfig("只打第一层", false))
+        {
+            page.State.SuccessRounds++;
+            page.Context.LogInfo(
+                $"只打第一层任务已完成，success_rounds + 1 (当前: {page.State.SuccessRounds})，退出结算页面",
+                "activity");
+            await ClickPointAsync(
+                    page,
+                    new RelativePoint(0.959, 0.051),
+                    "退出结算页面",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+
+        return false;
+    }
     // Python handle_continue (utils.py:3293)：通用"继续"按钮。
     private static async ValueTask<bool> HandleContinueAsync(
         ChaosModePage page,
@@ -964,6 +1243,33 @@ public sealed partial class ChaosModeTask : ITaskModule
             .ConfigureAwait(false);
         return true;
     }
+
+    // Boss equipment rewards are claimed before equipment choice and member allocation.
+    private static async ValueTask<bool> HandleBossEquipmentRewardAsync(
+        ChaosModePage page,
+        CancellationToken cancellationToken)
+    {
+        var claimBox = FindText(
+            page,
+            new RelativeRegion(0.850, 0.865, 0.995, 0.975),
+            GameText(page, "\u83B7\u5F97"));
+        if (claimBox is null)
+        {
+            return false;
+        }
+
+        page.Context.LogInfo(
+            "\u68C0\u6D4B\u5230 Boss \u88C5\u5907\u5956\u52B1\uFF0C\u5148\u9886\u53D6\u88C5\u5907\uFF0C\u968F\u540E\u8FDB\u5165\u4E8C\u9009\u4E00\u548C\u4E3B\u6218\u5458\u5206\u914D\u3002",
+            "activity");
+        await ClickTextAsync(
+                page,
+                claimBox,
+                "\u9886\u53D6 Boss \u88C5\u5907\u5956\u52B1",
+                cancellationToken)
+            .ConfigureAwait(false);
+        page.State.BossEquipmentRewardAwaitingAllocation = true;
+        return true;
+    }
     // Python handle_go_to_chaos_core (utils_chaos.py)：前往卡厄思核心按钮。
     private static ValueTask<bool> HandleGoToChaosCoreAsync(
         ChaosModePage page,
@@ -1202,21 +1508,17 @@ public sealed partial class ChaosModeTask : ITaskModule
         if (!page.Commands.TryConsumeEscape(out var command))
         {
             var cancel = FindTextAnywhere(page, GameText(page, "取消"));
-            if (cancel is not null)
+            if (cancel is null)
             {
-                await ClickTextAsync(
-                        page,
-                        cancel,
-                        "未收到逃脱指令，取消逃脱并返回",
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else
-            {
-                page.Context.LogInfo("未收到逃脱指令，按 Esc 退出逃脱页面。", "activity");
-                await page.Context.KeyAsync(InputKey.Escape, cancellationToken).ConfigureAwait(false);
+                return false;
             }
 
+            await ClickTextAsync(
+                    page,
+                    cancel,
+                    "未收到逃脱指令，取消逃脱并返回",
+                    cancellationToken)
+                .ConfigureAwait(false);
             return true;
         }
 
@@ -1282,7 +1584,7 @@ public sealed partial class ChaosModeTask : ITaskModule
         CancellationToken cancellationToken)
     {
         var title = FindBoxAtPoint(page, 0.498, 0.683);
-        if (title is null || !ContainsAny(page, title, "失败"))
+        if (title is null || !MatchesAny(page, title, "失败"))
         {
             return false;
         }
@@ -1472,6 +1774,7 @@ public sealed partial class ChaosModeTask : ITaskModule
             return;
         }
 
+        page.ExpectCenterConfirmationAfterAction(message);
         await ClickPointAsync(page, decision.Command.Target, message, cancellationToken)
             .ConfigureAwait(false);
         page.ActionArbiter.MarkCommandSent(decision.Command);
@@ -1486,20 +1789,20 @@ public sealed partial class ChaosModeTask : ITaskModule
         var clamped = point.Clamp();
         page.Context.LogInfo($"{message}，点击 ({clamped.X:0.000}, {clamped.Y:0.000})。", "activity");
         await page.Context.ClickRelativeAsync(clamped, cancellationToken).ConfigureAwait(false);
+        page.MarkInputDispatched();
     }
 
-    private static async ValueTask HoverClickPointAsync(
+    private static async ValueTask PressKeyAsync(
         ChaosModePage page,
-        RelativePoint point,
+        InputKey key,
         string message,
         CancellationToken cancellationToken)
     {
-        var clamped = point.Clamp();
-        page.Context.LogInfo(
-            $"{message}，悬停后点击 ({clamped.X:0.000}, {clamped.Y:0.000})。",
-            "activity");
-        await page.Context.HoverClickRelativeAsync(clamped, cancellationToken).ConfigureAwait(false);
+        page.Context.LogInfo($"{message}，按键 {key}。", "activity");
+        await page.Context.KeyAsync(key, cancellationToken).ConfigureAwait(false);
+        page.MarkInputDispatched();
     }
+
     private static OcrTextLine? FindText(
         ChaosModePage page,
         RelativeRegion region,
@@ -1628,6 +1931,23 @@ public sealed partial class ChaosModeTask : ITaskModule
         {
             "点击屏幕" when traditional => ["点击屏幕", "點擊屏幕", "点击画面", "點擊畫面"],
             "点击屏幕" => ["点击屏幕", "點擊屏幕"],
+            "纯白的记忆" when traditional => ["纯白的记忆", "純白的記憶", "纯白记忆", "純白記憶"],
+            "纯白的记忆" => ["纯白的记忆", "純白的記憶"],
+            "选择铭刻的记忆" when traditional => ["选择铭刻的记忆", "選擇銘刻的記憶", "选择铭刻记忆", "選擇銘刻記憶"],
+            "选择铭刻的记忆" => ["选择铭刻的记忆", "選擇銘刻的記憶"],
+            "铭刻的记忆" when traditional => ["铭刻的记忆", "銘刻的記憶", "铭刻记忆", "銘刻記憶"],
+            "铭刻的记忆" => ["铭刻的记忆", "銘刻的記憶"],
+            "领受计划的指示" when traditional => ["领受计划的指示", "領受計劃的指示", "领受计划的指示", "領受計畫的指示"],
+            "领受计划的指示" => ["领受计划的指示", "領受計劃的指示"],
+            "精密加工记忆" when traditional => ["精密加工记忆", "精密加工記憶"],
+            "精密加工记忆" => ["精密加工记忆", "精密加工記憶"],
+            "加工记忆" when traditional => ["加工记忆", "加工記憶"],
+            "加工记忆" => ["加工记忆", "加工記憶"],
+            "重新搜索" when traditional => ["重新搜索", "重新搜尋", "重新探索"],
+            "重新搜索" => ["重新搜索", "重新搜尋"],
+            "前往记忆之末" when traditional => ["前往记忆之末", "前往記憶之末"],
+            "前往记忆之末" => ["前往记忆之末", "前往記憶之末"],
+            "主战员" => ["主战员", "主戰員"],
             "继续" when traditional => ["继续", "繼續", "继续进行", "繼續進行"],
             "继续" => ["继续", "繼續"],
             "闪光" when traditional => ["闪光", "閃光", "灵光一闪", "靈光一閃"],
@@ -1692,6 +2012,9 @@ public sealed partial class ChaosModeTask : ITaskModule
             "冥想" => ["冥想"],
             "购买卡牌" => ["购买卡牌", "購買卡牌"],
             "请选择要接受卡牌的主战员" => ["请选择要接受卡牌的主战员", "請選擇要接受卡牌的主戰員"],
+            "请选择要复制的卡牌" when traditional =>
+                ["请选择要复制的卡牌", "請選擇要複製的卡牌", "请选择要复制的卡片", "請選擇要複製的卡片"],
+            "请选择要复制的卡牌" => ["请选择要复制的卡牌", "請選擇要複製的卡牌"],
             "选择要复制卡牌的主战员" when traditional =>
                 ["选择要复制卡牌的主战员", "選擇要複製卡牌的主戰員", "选择要复制卡牌的战斗员", "選擇要複製卡牌的戰鬥員"],
             "选择要复制卡牌的主战员" => ["选择要复制卡牌的主战员", "選擇要複製卡牌的主戰員"],
@@ -1821,12 +2144,91 @@ public sealed partial class ChaosModeTask : ITaskModule
         return !(inDisabledRange && maximumDifference < 5);
     }
 
+    private bool HandlePendingRestConfirmation(ChaosModePage page)
+    {
+        if (!page.State.AwaitingRestConfirmation)
+        {
+            return false;
+        }
+
+        if (page.Observation.HasCenterConfirmation)
+        {
+            return false;
+        }
+
+        if (DateTimeOffset.Now - page.State.RestConfirmationStartedAt < RestConfirmationTimeout)
+        {
+            page.Context.LogInfo("已发送休息操作，等待确认弹窗，暂不执行跳过或其他页面动作。", "activity");
+            return true;
+        }
+
+        page.State.AwaitingRestConfirmation = false;
+        page.State.RestConfirmationStartedAt = default;
+        page.Context.LogInfo("等待休息确认超时，恢复当前页面识别。", "warning");
+        return false;
+    }
+
+    private static string ResolveActionBoundaryKey(string routeId, ChaosModePage page)
+    {
+        if (string.Equals(routeId, "snow-season", StringComparison.Ordinal))
+        {
+            return $"{ResolveSnowSeasonActionStage(page)}-{page.State.SnowSeasonInputVersion}";
+        }
+
+        if (string.Equals(routeId, "select-card", StringComparison.Ordinal))
+        {
+            return $"select-card-{page.State.CardSelectionInputVersion}";
+        }
+
+        if (!string.Equals(routeId, "equipment", StringComparison.Ordinal))
+        {
+            return routeId;
+        }
+
+        var isInstallPage = IsEquipmentInstallPage(page);
+        var stagePrefix = "equipment";
+        var stageKey = page.State.EquipmentInstallAwaitingConfirm
+            ? $"{stagePrefix}-confirm"
+            : isInstallPage
+                ? $"{stagePrefix}-install"
+                : page.State.EquipmentChoiceAwaitingInstall
+                    ? $"{stagePrefix}-awaiting-install"
+                    : page.State.EquipmentChoiceConfirmAwaitingAllocation
+                        ? $"{stagePrefix}-choice-confirm-pending"
+                        : $"{stagePrefix}-choice";
+        LogEquipmentStageEvidence(page, stageKey, isInstallPage);
+        return stageKey;
+    }
+
+    private static void LogEquipmentStageEvidence(
+        ChaosModePage page,
+        string stageKey,
+        bool isInstallPage)
+    {
+        var evidence = page.Recognized.Lines
+            .Where(line => line.Text.Contains("装备", StringComparison.Ordinal)
+                           || line.Text.Contains("主战员", StringComparison.Ordinal)
+                           || line.Text.Contains("长按已佩戴", StringComparison.Ordinal)
+                           || line.Text.Contains("長按已佩戴", StringComparison.Ordinal)
+                           || line.Text.Contains("确认", StringComparison.Ordinal)
+                           || line.Text.Contains("提炼", StringComparison.Ordinal))
+            .Select(line =>
+                $"{line.Text}@{(line.Region.X + (line.Region.Width / 2d)) / page.Frame.Width:0.000},{(line.Region.Y + (line.Region.Height / 2d)) / page.Frame.Height:0.000}");
+        page.Context.LogDebug(
+            $"[equipment-stage] 帧 #{page.FrameSequence} key={stageKey} awaitingInstall={page.State.EquipmentChoiceAwaitingInstall} awaitingConfirm={page.State.EquipmentInstallAwaitingConfirm} installPage={isInstallPage} 证据={string.Join(" | ", evidence)}");
+    }
+
     private async ValueTask<bool> HandlePageAsync(
         ChaosModePage page,
         CancellationToken cancellationToken,
         string? preferredRouteId = null)
     {
-        if (await HandleClosePageAsync(page, cancellationToken).ConfigureAwait(false))
+        if (HandlePendingRestConfirmation(page))
+        {
+            return true;
+        }
+
+        if (await TryHandlePriorityOverlayAsync(page, cancellationToken).ConfigureAwait(false))
         {
             return true;
         }
@@ -1852,8 +2254,7 @@ public sealed partial class ChaosModeTask : ITaskModule
         if (!string.IsNullOrWhiteSpace(preferredRouteId))
         {
             var preferred = routes.FirstOrDefault(route =>
-                    string.Equals(route.Id, preferredRouteId, StringComparison.Ordinal))
-                ?? _frameRouter.FindById(preferredRouteId);
+                string.Equals(route.Id, preferredRouteId, StringComparison.Ordinal));
             if (preferred is null)
             {
                 return false;
@@ -1864,6 +2265,11 @@ public sealed partial class ChaosModeTask : ITaskModule
                     !string.Equals(route.Id, preferred.Id, StringComparison.Ordinal)))
                 .ToArray();
         }
+        if (routes.All(route => !string.Equals(route.Id, "select-card", StringComparison.Ordinal)))
+        {
+            page.State.ResetCardSelectionSearch();
+        }
+
 
         if (routes.Count == 0)
         {
@@ -1872,42 +2278,96 @@ public sealed partial class ChaosModeTask : ITaskModule
 
         foreach (var route in routes)
         {
-            if (!route.UseActionBoundary)
-            {
-                var handledWithoutBoundary = await route
-                    .HandleAsync(page, cancellationToken)
-                    .ConfigureAwait(false);
-                if (handledWithoutBoundary || !route.AllowFallbackWhenUnhandled)
-                {
-                    return true;
-                }
-
-                continue;
-            }
-
-            var actionDecision = page.ActionArbiter.TryBeginPageAction(route.Id, page.Observation);
-            if (actionDecision.Kind == PageActionDecisionKind.SuppressDuplicate)
-            {
-                page.Context.LogInfo(actionDecision.Reason, "activity");
-                return true;
-            }
-
-            var handled = await route.HandleAsync(page, cancellationToken).ConfigureAwait(false);
-            if (handled)
-            {
-                page.ActionArbiter.MarkPageActionSent(route.Id, page.Observation);
-                return true;
-            }
-
-            page.ActionArbiter.CancelPageAction(route.Id, page.Observation);
-            if (!route.AllowFallbackWhenUnhandled)
+            if (await TryExecuteRouteAsync(page, route, cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
+
         }
 
         // 所有命中路由都未执行动作，但这些帧已被当前页面路由认领。
         return true;
+    }
+
+    private async ValueTask<bool> TryHandlePriorityOverlayAsync(
+        ChaosModePage page,
+        CancellationToken cancellationToken)
+    {
+        var route = _frameRouter.ResolvePriorityOverlay(page);
+        return route is not null
+               && await TryExecuteRouteAsync(page, route, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask<bool> TryExecuteRouteAsync(
+        ChaosModePage page,
+        FrameRoute<ChaosModePage> route,
+        CancellationToken cancellationToken)
+    {
+        if (!route.UseActionBoundary)
+        {
+            var handledWithoutBoundary = await route
+                .HandleAsync(page, cancellationToken)
+                .ConfigureAwait(false);
+            return handledWithoutBoundary || !route.AllowFallbackWhenUnhandled;
+        }
+
+        var actionKey = ResolveActionBoundaryKey(route.Id, page);
+        var retryAfterFrames = route.ActionRetryAfterFrames?.Invoke(page);
+        var recoveryAfterFrames = GetActionRecoveryWaitFrames(page);
+        var actionDecision = page.ActionArbiter.TryBeginPageAction(
+            actionKey,
+            page.Observation,
+            retryAfterFrames,
+            PageActionMaxAttempts,
+            route.Id,
+            recoveryAfterFrames);
+        if (actionDecision.Kind == PageActionDecisionKind.SuppressDuplicate)
+        {
+            page.Context.LogInfo(actionDecision.Reason, "activity");
+            return true;
+        }
+
+        if (actionDecision.Kind == PageActionDecisionKind.Recover)
+        {
+            PreparePageActionRecovery(page, actionKey, actionDecision);
+        }
+
+        var inputCountBefore = page.DispatchedInputCount;
+        var handled = await route.HandleAsync(page, cancellationToken).ConfigureAwait(false);
+        if (page.DispatchedInputCount > inputCountBefore)
+        {
+            page.ActionArbiter.MarkPageActionSent(actionKey, page.Observation);
+        }
+
+        if (handled)
+        {
+            return true;
+        }
+
+        page.ActionArbiter.CancelPageAction(actionKey, page.Observation);
+        return !route.AllowFallbackWhenUnhandled;
+    }
+
+    private static void PreparePageActionRecovery(
+        ChaosModePage page,
+        string actionKey,
+        PageActionDecision decision)
+    {
+        page.State.ResetRecognitionMiss(actionKey);
+        if (string.Equals(actionKey, "event-task", StringComparison.Ordinal))
+        {
+            ClearPendingEventOption(page.State);
+        }
+
+        var message = $"{decision.Reason} 已清理暂存状态，并重新识别当前帧。";
+        if (decision.RecoveryCount <= 1)
+        {
+            page.Context.LogInfo(message, "warning");
+        }
+        else
+        {
+            page.Context.LogDebug(message);
+        }
     }
 
     private sealed class ChaosModePage(
@@ -1918,7 +2378,8 @@ public sealed partial class ChaosModeTask : ITaskModule
         ChaosRunState state,
         ActionArbiter actionArbiter,
         ChaosCommandBus commandBus,
-        FrameLease frameLease)
+        FrameLease frameLease,
+        Action? requestCenterConfirmationProbe = null) : IDisposable
     {
         private ChaosModeFrameClassification? _classification;
 
@@ -1934,7 +2395,23 @@ public sealed partial class ChaosModeTask : ITaskModule
 
         public void DisposeFrame() => FrameLease.Dispose();
 
+        public void Dispose() => DisposeFrame();
+
         public ChaosRunState State { get; } = state;
+        public int DispatchedInputCount { get; private set; }
+        public void MarkInputDispatched() => DispatchedInputCount++;
+
+        public void ExpectCenterConfirmationAfterAction(string reason)
+        {
+            if (requestCenterConfirmationProbe is null)
+            {
+                return;
+            }
+
+            requestCenterConfirmationProbe();
+            Context.LogDebug(
+                $"[roi-probe] 帧 #{FrameSequence} 动作请求下一帧探测中心确认：{reason}。");
+        }
     }
 
     private readonly record struct CenterConfirmation(RelativePoint Point);
@@ -1974,6 +2451,7 @@ public sealed partial class ChaosModeTask : ITaskModule
         ChaosModePage page,
         CancellationToken cancellationToken)
     {
+        page.State.BattleEvent.Complete();
         page.State.EnterNewNode = true;
         page.State.FlashOrRest = true;
         ClearPendingEventOption(page.State);
@@ -1997,12 +2475,20 @@ public sealed partial class ChaosModeTask : ITaskModule
         {
             page.State.ReachFinalBoss = true;
             page.State.NodeType = "boss";
-            if (!string.Equals(
-                    page.Context.GetTaskConfig("第几层boss前自动暂停", "不暂停"),
-                    "不暂停",
-                    StringComparison.Ordinal))
+            var pauseConfig = page.Context.GetTaskConfig("第几层boss前自动暂停", "不暂停");
+            if (!string.Equals(pauseConfig, "不暂停", StringComparison.Ordinal)
+                && int.TryParse(pauseConfig, out var pauseLayer)
+                && pauseLayer - 1 == page.State.PassFinalBossCount
+                && page.State.PauseRequestedBossLayer != pauseLayer)
             {
-                page.Context.LogInfo("已配置 Boss 前自动暂停；当前阶段尚未接入运行时暂停，继续进入 Boss。", "warning");
+                page.Context.LogInfo(
+                    $"配置在第{pauseLayer}层 Boss 前暂停（当前已通过{page.State.PassFinalBossCount}层）。",
+                    "activity");
+                if (page.Context.RequestPause($"第{pauseLayer}层 Boss 前自动暂停"))
+                {
+                    page.State.PauseRequestedBossLayer = pauseLayer;
+                    return true;
+                }
             }
 
             await ClickPointAsync(
@@ -2297,12 +2783,13 @@ public sealed partial class ChaosModeTask : ITaskModule
             }
 
             var closeNow = DateTimeOffset.UtcNow;
-            if (_targetMemberArchiveFlow.HasTimedOut(closeNow))
+            if (!_targetMemberArchiveFlow.HasTimedOut(closeNow))
             {
-                page.Context.LogInfo("关闭信息统计页面超时，继续尝试关闭。", "warning");
-                _targetMemberArchiveFlow.BeginClosingStatistics(closeNow);
+                return true;
             }
 
+            page.Context.LogInfo("关闭信息统计页面超时，继续尝试关闭。", "warning");
+            _targetMemberArchiveFlow.BeginClosingStatistics(closeNow);
             await CloseTargetMemberArchiveAsync(page, cancellationToken).ConfigureAwait(false);
             return true;
         }
@@ -2390,23 +2877,26 @@ public sealed partial class ChaosModeTask : ITaskModule
             return true;
         }
 
-        foreach (var runtimeFeature in TargetMemberRuntimeFeatures)
+        var savedTemplates = new Dictionary<string, RuntimeFeatureTemplate>(StringComparer.Ordinal);
+        foreach (var runtimeFeature in TargetMemberAvatarCatalog.Features)
         {
             var savedTemplate = runtimeMatcher.RegisterRuntimeTemplate(
                 runtimeFeature.Name,
                 page.Frame,
                 memberRegions[targetIndex],
                 runtimeFeature.TargetRegion ?? memberRegions[targetIndex]);
-            try
-            {
-                page.Context.RuntimeFeatureTemplates?.Save(savedTemplate);
-            }
-            catch (Exception exception)
-            {
-                page.Context.LogInfo(
-                    $"主战员头像缓存「{runtimeFeature.Name}」保存失败：{exception.Message}",
-                    "warning");
-            }
+            savedTemplates[runtimeFeature.Name] = savedTemplate;
+        }
+
+        try
+        {
+            page.Context.RuntimeFeatureTemplates?.SaveBundle(savedTemplates);
+        }
+        catch (Exception exception)
+        {
+            page.Context.LogInfo(
+                $"主战员头像变体保存失败：{exception.Message}",
+                "warning");
         }
 
         page.State.SaveTargetMember = true;
@@ -2432,8 +2922,83 @@ public sealed partial class ChaosModeTask : ITaskModule
         CancellationToken cancellationToken)
     {
         var title = FindBoxAtPoint(page, 0.499, 0.126);
-        if (title is null || !MatchesAny(page, title, "装备"))
+        var hasEquipmentTitle = title is not null && MatchesAny(page, title, "装备");
+        var isInstallPage = IsEquipmentInstallPage(page);
+        if (!hasEquipmentTitle && !isInstallPage)
         {
+            return false;
+        }
+
+        if (page.State.EquipmentChoiceConfirmAwaitingAllocation)
+        {
+            if (!isInstallPage)
+            {
+                page.Context.LogDebug("装备选择已确认，等待安装或主战员分配页面。");
+                return true;
+            }
+
+            page.State.EquipmentChoiceConfirmAwaitingAllocation = false;
+            page.State.ResetRecognitionMiss(EquipmentInstallTransitionActionKey);
+        }
+
+        if (page.State.EquipmentChoiceAwaitingInstall && isInstallPage)
+        {
+            page.State.EquipmentChoiceAwaitingInstall = false;
+            page.State.ResetRecognitionMiss(EquipmentInstallTransitionActionKey);
+        }
+        else if (page.State.EquipmentChoiceAwaitingInstall
+                 && IsEquipmentChoiceConfirmPage(page))
+        {
+            var confirmBox = FindFooterConfirmBox(page);
+            if (confirmBox is null)
+            {
+                return false;
+            }
+
+            page.Context.LogInfo(
+                "装备已选中，点击本页确认进入后续安装或主战员分配。",
+                "activity");
+            await ClickTextAsync(page, confirmBox, "确认装备选择", cancellationToken)
+                .ConfigureAwait(false);
+            page.State.EquipmentChoiceAwaitingInstall = false;
+            page.State.EquipmentChoiceConfirmAwaitingAllocation = true;
+            page.State.ResetRecognitionMiss(EquipmentInstallTransitionActionKey);
+            return true;
+        }
+        else if (page.State.EquipmentChoiceAwaitingInstall)
+        {
+            var waitRounds = Math.Clamp(
+                page.Context.GetTaskConfig(
+                    ChaosModeConfigSchema.RecognitionFallbackWaitRoundsKey,
+                    2),
+                1,
+                10);
+            var missCount = page.State.IncrementRecognitionMiss(
+                EquipmentInstallTransitionActionKey);
+            if (missCount < waitRounds)
+            {
+                page.Context.LogDebug(
+                    $"装备候选已点击，等待安装页 {missCount}/{waitRounds} 帧。");
+                return false;
+            }
+
+            var ocrEvidence = string.Join(
+                " | ",
+                page.Recognized.Lines.Select(line =>
+                    $"{line.Text}@{(line.Region.X + (line.Region.Width / 2d)) / page.Frame.Width:0.000},{(line.Region.Y + (line.Region.Height / 2d)) / page.Frame.Height:0.000}"));
+            page.Context.LogInfo(
+                $"装备流程无法推进：帧 #{page.FrameSequence}，候选已点击但未识别到后续页面或确认页。"
+                + $" awaitingInstall={page.State.EquipmentChoiceAwaitingInstall}，"
+                + $" awaitingConfirm={page.State.EquipmentInstallAwaitingConfirm}，"
+                + $" bossReward={page.State.BossEquipmentRewardAwaitingAllocation}，"
+                + $" isInstallPage={isInstallPage}，confirmPage={IsEquipmentChoiceConfirmPage(page)}，"
+                + $" OCR={ocrEvidence}",
+                "error");
+            page.State.EquipmentChoiceAwaitingInstall = false;
+            page.State.ResetRecognitionMiss(EquipmentInstallTransitionActionKey);
+            page.Context.LogInfo(
+                "等待装备后续页面超时，下一帧重新识别装备候选。",
+                "warning");
             return false;
         }
 
@@ -2444,8 +3009,7 @@ public sealed partial class ChaosModeTask : ITaskModule
                 DecisionSnapshotCatalog.EquipmentChoiceReasonId,
                 cancellationToken: cancellationToken)
             .ConfigureAwait(false);
-        var equipmentHint = FindBoxAtPoint(page, 0.921, 0.135);
-        if (equipmentHint is not null && ContainsAny(page, equipmentHint, "请选择主战员"))
+        if (isInstallPage)
         {
             return await HandleEquipmentInstallAsync(page, cancellationToken).ConfigureAwait(false);
         }
@@ -2453,11 +3017,146 @@ public sealed partial class ChaosModeTask : ITaskModule
         return await HandleEquipmentChoiceAsync(page, cancellationToken).ConfigureAwait(false);
     }
 
+    private void ObserveEquipmentInstallLifecycle(ChaosModePage page)
+    {
+        if (!page.State.EquipmentInstallAwaitingConfirm)
+        {
+            return;
+        }
+
+        var route = _frameRouter.Resolve(page);
+        if (route is null || string.Equals(route.Id, "equipment", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        page.Context.LogDebug(
+            $"装备安装页已离开，结束本次确认等待。帧 #{page.FrameSequence}，路由={route.Id}。");
+        CompleteEquipmentInstallAttempt(page, installed: true);
+        page.State.BossEquipmentRewardAwaitingAllocation = false;
+    }
+
+    private static void BeginEquipmentInstallConfirmation(ChaosModePage page)
+    {
+        page.State.EquipmentInstallAwaitingConfirm = true;
+        page.State.EquipmentInstallMemberClickedFrameSequence = page.FrameSequence;
+        page.State.EquipmentInstallConfirmClickedFrameSequence = 0;
+        page.State.EquipmentInstallConfirmAttempts = 0;
+        page.State.ResetRecognitionMiss(EquipmentInstallConfirmWaitActionKey);
+    }
+
+    private static void BeginEquipmentInstallAttempt(
+        ChaosModePage page,
+        int slot,
+        ChaosEquipmentCandidate candidate)
+    {
+        page.State.PendingEquipmentInstall = new EquipmentPendingInstall(
+            slot,
+            candidate.Name,
+            candidate.Description,
+            candidate.Quality,
+            page.State.EquipmentNames[slot],
+            page.State.EquipmentDescriptions[slot],
+            page.State.EquipmentQualities[slot]);
+        page.State.EquipmentNames[slot] = candidate.Name;
+        page.State.EquipmentDescriptions[slot] = candidate.Description;
+        page.State.EquipmentQualities[slot] = candidate.Quality;
+        BeginEquipmentInstallConfirmation(page);
+    }
+
+    private static void CompleteEquipmentInstallAttempt(ChaosModePage page, bool installed)
+    {
+        if (!installed && page.State.PendingEquipmentInstall is { } pending)
+        {
+            page.State.EquipmentNames[pending.Slot] = pending.PreviousName;
+            page.State.EquipmentDescriptions[pending.Slot] = pending.PreviousDescription;
+            page.State.EquipmentQualities[pending.Slot] = pending.PreviousQuality;
+        }
+
+        page.State.PendingEquipmentInstall = null;
+        page.State.EquipmentInstallAwaitingConfirm = false;
+        page.State.EquipmentInstallMemberClickedFrameSequence = 0;
+        page.State.EquipmentInstallConfirmClickedFrameSequence = 0;
+        page.State.EquipmentInstallConfirmAttempts = 0;
+        page.State.ResetRecognitionMiss(EquipmentInstallConfirmWaitActionKey);
+    }
+
     private static async ValueTask<bool> HandleEquipmentInstallAsync(
         ChaosModePage page,
         CancellationToken cancellationToken)
     {
         page.Context.LogInfo("检测到安装装备界面。", "activity");
+        if (page.State.EquipmentInstallAwaitingConfirm)
+        {
+            if (page.State.EquipmentInstallConfirmAttempts > 0)
+            {
+                if (page.FrameSequence <= page.State.EquipmentInstallConfirmClickedFrameSequence)
+                {
+                    page.Context.LogDebug(
+                        $"忽略确认点击前的旧帧 #{page.FrameSequence}，上次确认帧 #{page.State.EquipmentInstallConfirmClickedFrameSequence}。");
+                    return true;
+                }
+
+                page.Context.LogDebug(
+                    $"安装装备确认已发送，同一安装页只点击一次，等待页面变化。帧 #{page.FrameSequence}。");
+                return true;
+            }
+
+            var waitRounds = Math.Clamp(
+                page.Context.GetTaskConfig(
+                    ChaosModeConfigSchema.RecognitionFallbackWaitRoundsKey,
+                    2),
+                1,
+                10);
+            var confirmBox = FindFooterConfirmBox(page);
+            if (confirmBox is null)
+            {
+                var missCount = page.State.IncrementRecognitionMiss(
+                    EquipmentInstallConfirmWaitActionKey);
+                if (missCount < waitRounds)
+                {
+                    page.Context.LogDebug(
+                        $"主战员已选择，等待确认按钮 {missCount}/{waitRounds} 帧。");
+                    return true;
+                }
+
+                page.Context.LogInfo(
+                    $"安装装备确认等待超时，回退本次装备记录并重新选择主战员。等待帧数={missCount}/{waitRounds}。",
+                    "warning");
+                CompleteEquipmentInstallAttempt(page, installed: false);
+                page.State.BossEquipmentRewardAwaitingAllocation = false;
+                return true;
+            }
+
+            if (page.State.EquipmentInstallConfirmAttempts == 0
+                && page.FrameSequence <= page.State.EquipmentInstallMemberClickedFrameSequence)
+            {
+                page.Context.LogDebug(
+                    $"安装装备确认等待点击后的新帧。当前帧 #{page.FrameSequence}，选人帧 #{page.State.EquipmentInstallMemberClickedFrameSequence}。");
+                return true;
+            }
+
+
+            var activeByColor = IsButtonActive(page.Frame, confirmBox);
+            if (!activeByColor)
+            {
+                page.Context.LogDebug(
+                    "安装装备确认按钮的颜色探测结果为灰色；当前已完成选人，按 OCR 确认文本继续执行确认。");
+            }
+
+            await ClickFooterConfirmAsync(
+                    page,
+                    confirmBox,
+                    "安装装备确认",
+                    cancellationToken)
+                .ConfigureAwait(false);
+            page.State.EquipmentInstallConfirmAttempts++;
+            page.State.EquipmentInstallConfirmClickedFrameSequence = page.FrameSequence;
+            page.State.ResetRecognitionMiss(EquipmentInstallConfirmWaitActionKey);
+            page.State.BossEquipmentRewardAwaitingAllocation = false;
+            return true;
+        }
+
         var bottomButtons = FindOcrBoxes(page, new RelativeRegion(0.013, 0.881, 0.992, 0.994));
         var cancelBox = bottomButtons.FirstOrDefault(line => ContainsAny(page, line, "取消"));
         var purchaseBox = bottomButtons.FirstOrDefault(line => ContainsAny(page, line, "购买"));
@@ -2486,6 +3185,7 @@ public sealed partial class ChaosModeTask : ITaskModule
         {
             page.Context.LogInfo("安装装备界面只有提炼按钮，直接点击提炼。", "activity");
             await ClickTextAsync(page, refineBoxes[0], "提炼装备", cancellationToken).ConfigureAwait(false);
+            page.State.BossEquipmentRewardAwaitingAllocation = false;
             return true;
         }
 
@@ -2498,7 +3198,7 @@ public sealed partial class ChaosModeTask : ITaskModule
             0.5);
         if (candidate is null)
         {
-            page.Context.LogInfo("未能识别待安装装备的名称或类型。", "warning");
+            page.Context.LogInfo("未能识别待安装装备的名称或类型，等待下一帧重新识别。", "warning");
             if (isPurchasePage)
             {
                 await ClickTextAsync(page, cancelBox!, "取消购买装备", cancellationToken).ConfigureAwait(false);
@@ -2515,23 +3215,47 @@ public sealed partial class ChaosModeTask : ITaskModule
             memberTags,
             new RelativeRegion(0.607, 0.192, 0.739, 0.856),
             "target_member_tiny");
-        var preferredMemberIndex = targetMemberIndex ?? (memberTags.Count > 0 ? 0 : null);
-        if (targetMemberIndex is null && memberTags.Count > 0)
+        var tracksTargetMember = page.Context
+            .GetTaskConfig("刷存档主战员", string.Empty)
+            .Trim()
+            .Length > 0;
+        var preferredMemberIndex = targetMemberIndex
+                                   ?? (!tracksTargetMember && memberTags.Count > 0 ? 0 : null);
+        if (tracksTargetMember && targetMemberIndex is null && memberTags.Count > 0)
         {
-            page.Context.LogInfo("未识别到刷存档主战员头像，暂用第1号主战员。", "warning");
+            page.Context.LogInfo(
+                "未识别到刷存档主战员头像，不会把第1号主战员当作刷存档目标。",
+                "warning");
         }
 
         var slot = candidate.Slot;
         var currentName = page.State.EquipmentNames[slot];
         var currentQuality = page.State.EquipmentQualities[slot];
-        var decision = ChaosEquipmentLogic.DecideInstall(currentName, currentQuality, candidate);
+        var otherSlotQualities = page.State.EquipmentQualities
+            .Where((_, index) => index != slot)
+            .ToArray();
+        var decision = ChaosEquipmentLogic.DecideInstall(
+            currentName,
+            currentQuality,
+            candidate,
+            otherSlotQualities);
 
         if (decision.ShouldInstall && preferredMemberIndex is int preferredIndex)
         {
             var chosen = memberTags[preferredIndex];
-            page.State.EquipmentNames[slot] = candidate.Name;
-            page.State.EquipmentDescriptions[slot] = candidate.Description;
-            page.State.EquipmentQualities[slot] = candidate.Quality;
+            if (!tracksTargetMember || targetMemberIndex is not null)
+            {
+                if (isPurchasePage)
+                {
+                    page.State.EquipmentNames[slot] = candidate.Name;
+                    page.State.EquipmentDescriptions[slot] = candidate.Description;
+                    page.State.EquipmentQualities[slot] = candidate.Quality;
+                }
+                else
+                {
+                    BeginEquipmentInstallAttempt(page, slot, candidate);
+                }
+            }
             var clickY = (chosen.Region.Y + (chosen.Region.Height / 2d)) / page.Frame.Height;
             var targetLabel = targetMemberIndex is int matchedIndex
                 ? $"刷存档主战员（第{matchedIndex + 1}号）"
@@ -2539,20 +3263,24 @@ public sealed partial class ChaosModeTask : ITaskModule
             page.Context.LogInfo(
                 $"{slot + 1}号位装备「{candidate.Name}」优于当前装备「{currentName}」，原因={decision.Reason}，安装给{targetLabel}。",
                 "activity");
-            await HoverClickPointAsync(
+            await ClickPointAsync(
                     page,
                     new RelativePoint(0.756, clickY),
                     $"安装{slot + 1}号位装备",
                     cancellationToken)
                 .ConfigureAwait(false);
+            if (!isPurchasePage)
+            {
+                BeginEquipmentInstallConfirmation(page);
+            }
+
             if (isPurchasePage)
             {
                 await ClickTextAsync(page, purchaseBox!, "购买装备", cancellationToken).ConfigureAwait(false);
                 return true;
             }
 
-            page.ActionArbiter.MarkPageActionSent("equipment", page.Observation);
-            return false;
+            return true;
         }
 
         var otherMembers = memberTags
@@ -2565,20 +3293,24 @@ public sealed partial class ChaosModeTask : ITaskModule
             page.Context.LogInfo(
                 $"{slot + 1}号位无需替换当前装备「{currentName}」，原因={decision.Reason}，安装给其他主战员。",
                 "activity");
-            await HoverClickPointAsync(
+            await ClickPointAsync(
                     page,
                     new RelativePoint(0.756, clickY),
                     "安装装备给其他主战员",
                     cancellationToken)
                 .ConfigureAwait(false);
+            if (!isPurchasePage)
+            {
+                BeginEquipmentInstallConfirmation(page);
+            }
+
             if (isPurchasePage)
             {
                 await ClickTextAsync(page, purchaseBox!, "购买装备", cancellationToken).ConfigureAwait(false);
                 return true;
             }
 
-            page.ActionArbiter.MarkPageActionSent("equipment", page.Observation);
-            return false;
+            return true;
         }
 
         if (isPurchasePage)
@@ -2591,12 +3323,19 @@ public sealed partial class ChaosModeTask : ITaskModule
         if (refineBox is not null)
         {
             await ClickTextAsync(page, refineBox, "无需替换装备，点击提炼", cancellationToken).ConfigureAwait(false);
+            page.State.BossEquipmentRewardAwaitingAllocation = false;
             return true;
         }
 
         page.Context.LogInfo("未找到可选择的主战员或提炼按钮。", "warning");
         return false;
     }
+
+    private static OcrTextLine? FindFooterConfirmBox(ChaosModePage page)
+        => FindText(
+            page,
+            new RelativeRegion(0.267, 0.867, 0.991, 0.979),
+            GameText(page, "确认"));
 
     private static async ValueTask<bool> HandleEquipmentChoiceAsync(
         ChaosModePage page,
@@ -2645,8 +3384,9 @@ public sealed partial class ChaosModeTask : ITaskModule
                 $"选择{chosen.Slot + 1}号位装备「{chosen.Name}」",
                 cancellationToken)
             .ConfigureAwait(false);
-        page.ActionArbiter.MarkPageActionSent("equipment", page.Observation);
-        return false;
+        page.State.EquipmentChoiceAwaitingInstall = true;
+        page.State.ResetRecognitionMiss(EquipmentInstallTransitionActionKey);
+        return true;
     }
 
     private static ChaosEquipmentCandidate? ReadEquipmentCandidate(
@@ -2802,12 +3542,12 @@ public sealed partial class ChaosModeTask : ITaskModule
     }
 
     // Python handle_view_original (utils.py:5231) 的函数名沿用了“查看原件”，
-    // 实际业务是“请决定闪光效果”页面按闪光优先级选牌。
+    // 页面可能只显示顶部“查看原件/查看之前的闪光”，也可能同时显示“请决定闪光效果”。
     private static async ValueTask<bool> HandleFlashEffectAsync(
         ChaosModePage page,
         CancellationToken cancellationToken)
     {
-        if (FindTextAnywhere(page, GameText(page, "请决定闪光效果")) is null)
+        if (!IsFlashEffectPage(page))
         {
             return false;
         }
@@ -2846,6 +3586,14 @@ public sealed partial class ChaosModeTask : ITaskModule
         if (chosenCard is not null)
         {
             page.Context.LogInfo($"闪光优先选择「{chosenCard.Name}」。", "activity");
+            var firstPriority = flashPriority.FirstOrDefault(keyword => !string.IsNullOrWhiteSpace(keyword));
+            if (page.Context.GetTaskConfig("首层刷特定闪光", false)
+                && firstPriority is not null
+                && ChaosCardRecognition.MatchesFlashPriority(chosenCard, firstPriority))
+            {
+                page.State.GetSpecificFlash = true;
+                page.Context.LogInfo("已命中闪光优先级第一项，记录已获得特定闪光", "activity");
+            }
         }
 
         var targetBox = FindFeatureOne(

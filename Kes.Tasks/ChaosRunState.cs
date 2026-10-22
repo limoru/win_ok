@@ -1,13 +1,25 @@
 namespace Kes.Tasks;
 
+public sealed record EquipmentPendingInstall(
+    int Slot,
+    string Name,
+    string Description,
+    string Quality,
+    string PreviousName,
+    string PreviousDescription,
+    string PreviousQuality);
+
 /// <summary>
 /// 自动卡厄思模式的单局运行状态，对应 Python 版 <c>ChaosMode.node_status</c>。
 /// 每个窗口/会话一个实例，随 <see cref="ChaosModeTask"/> 存活，跨帧保留。
 /// </summary>
 public sealed class ChaosRunState
 {
+    public BattleEventFlow BattleEvent { get; } = new();
     public bool Shop { get; set; }
     public bool FlashOrRest { get; set; }
+    public bool AwaitingRestConfirmation { get; set; }
+    public DateTimeOffset RestConfirmationStartedAt { get; set; }
     public bool ReachFinalBoss { get; set; }
     public bool FinalBossBattle { get; set; }
     public int PassFinalBossCount { get; set; }
@@ -29,8 +41,36 @@ public sealed class ChaosRunState
     public bool ValidationCardPromptDontShowClicked { get; set; }
     public DateTimeOffset? ValidationCardPromptConfirmedAt { get; set; }
     public int PendingRemovedCardCount { get; set; }
+    public string CardSelectionAction { get; set; } = string.Empty;
+    public int CardSelectionTargetCount { get; set; }
+    public int CardSelectionInputVersion { get; set; }
+    public int CardSelectionScrollCount { get; set; }
+    public int CardSelectionUnchangedScrollCount { get; set; }
+    public string CardSelectionLastFingerprint { get; set; } = string.Empty;
+    public SnowSeasonPhase SnowSeasonPhase { get; set; }
+    public int SnowSeasonInputVersion { get; set; }
+    public DateTimeOffset SnowSeasonLastInputAt { get; set; }
+    public string SnowEventFallbackFingerprint { get; set; } = string.Empty;
+    public List<int> SnowMemoryRefreshAttempts { get; } = [0, 0, 0];
+    public string SnowSelectedMemoryName { get; set; } = string.Empty;
+    public int SnowMemberAttemptIndex { get; set; }
+    public DateTimeOffset SnowMemberCandidateClickedAt { get; set; }
+    public DateTimeOffset SnowMemberConfirmClickedAt { get; set; }
     public int CopyMemberAttemptIndex { get; set; }
+    public DateTimeOffset CopyMemberCandidateClickedAt { get; set; }
+    public DateTimeOffset CopyMemberConfirmClickedAt { get; set; }
     public int MainMemberFlashAttemptIndex { get; set; }
+    public DateTimeOffset MainMemberFlashCandidateClickedAt { get; set; }
+    public DateTimeOffset MainMemberFlashConfirmClickedAt { get; set; }
+    public bool EquipmentChoiceAwaitingInstall { get; set; }
+    public bool EquipmentChoiceConfirmAwaitingAllocation { get; set; }
+    public bool EquipmentInstallAwaitingConfirm { get; set; }
+    public EquipmentPendingInstall? PendingEquipmentInstall { get; set; }
+    public long EquipmentInstallMemberClickedFrameSequence { get; set; }
+    public long EquipmentInstallConfirmClickedFrameSequence { get; set; }
+    public int EquipmentInstallConfirmAttempts { get; set; }
+    public bool BossEquipmentRewardAwaitingAllocation { get; set; }
+    public int PauseRequestedBossLayer { get; set; } = -1;
     private readonly Dictionary<string, int> _recognitionMissCounts = new(StringComparer.Ordinal);
     public Dictionary<string, bool> MeditationCards { get; private set; } = new(StringComparer.Ordinal);
     public List<string> EquipmentNames { get; private set; } = ["", "", ""];
@@ -57,6 +97,30 @@ public sealed class ChaosRunState
         _recognitionMissCounts.Remove(actionKey);
     }
 
+    public void ResetCardSelectionSearch()
+    {
+        CardSelectionAction = string.Empty;
+        CardSelectionTargetCount = 0;
+        CardSelectionInputVersion = 0;
+        CardSelectionScrollCount = 0;
+        CardSelectionUnchangedScrollCount = 0;
+        CardSelectionLastFingerprint = string.Empty;
+    }
+
+    public void ResetSnowSeasonState()
+    {
+        SnowSeasonPhase = SnowSeasonPhase.None;
+        SnowSeasonInputVersion = 0;
+        SnowSeasonLastInputAt = default;
+        SnowEventFallbackFingerprint = string.Empty;
+        SnowMemoryRefreshAttempts.Clear();
+        SnowMemoryRefreshAttempts.AddRange([0, 0, 0]);
+        SnowSelectedMemoryName = string.Empty;
+        SnowMemberAttemptIndex = 0;
+        SnowMemberCandidateClickedAt = default;
+        SnowMemberConfirmClickedAt = default;
+    }
+
     /// <summary>
     /// 重置层状态（对应 Python <c>reset_layer_status</c>）：保留通关计数与任务统计，
     /// 清掉“这一层”的过程标记。过了关底 BOSS 之后调用。
@@ -72,6 +136,8 @@ public sealed class ChaosRunState
         var keepRemovedCards = RemovedCardCount;
         var keepShopRemovedCards = ShopRemovedCardCount;
         var keepNeutralCards = NeutralCardCount;
+        var keepPendingRemovedCardCount = PendingRemovedCardCount;
+        var keepMeditationCards = new Dictionary<string, bool>(MeditationCards, StringComparer.Ordinal);
         var keepEquipmentNames = EquipmentNames;
         var keepEquipmentDescriptions = EquipmentDescriptions;
         var keepEquipmentQualities = EquipmentQualities;
@@ -87,6 +153,8 @@ public sealed class ChaosRunState
         RemovedCardCount = keepRemovedCards;
         ShopRemovedCardCount = keepShopRemovedCards;
         NeutralCardCount = keepNeutralCards;
+        PendingRemovedCardCount = keepPendingRemovedCardCount;
+        MeditationCards = keepMeditationCards;
         EquipmentNames = keepEquipmentNames;
         EquipmentDescriptions = keepEquipmentDescriptions;
         EquipmentQualities = keepEquipmentQualities;
@@ -110,8 +178,11 @@ public sealed class ChaosRunState
 
     private void ResetAll()
     {
+        BattleEvent.Complete();
         Shop = false;
         FlashOrRest = false;
+        AwaitingRestConfirmation = false;
+        RestConfirmationStartedAt = default;
         ReachFinalBoss = false;
         FinalBossBattle = false;
         PassFinalBossCount = 0;
@@ -131,8 +202,23 @@ public sealed class ChaosRunState
         NeutralCardCount = 0;
         PendingShopRemoval = false;
         PendingRemovedCardCount = 0;
+        ResetCardSelectionSearch();
+        ResetSnowSeasonState();
         CopyMemberAttemptIndex = 0;
+        CopyMemberCandidateClickedAt = default;
+        CopyMemberConfirmClickedAt = default;
         MainMemberFlashAttemptIndex = 0;
+        MainMemberFlashCandidateClickedAt = default;
+        MainMemberFlashConfirmClickedAt = default;
+        EquipmentChoiceAwaitingInstall = false;
+        EquipmentChoiceConfirmAwaitingAllocation = false;
+        EquipmentInstallAwaitingConfirm = false;
+        PendingEquipmentInstall = null;
+        EquipmentInstallMemberClickedFrameSequence = 0;
+        EquipmentInstallConfirmClickedFrameSequence = 0;
+        EquipmentInstallConfirmAttempts = 0;
+        BossEquipmentRewardAwaitingAllocation = false;
+        PauseRequestedBossLayer = -1;
         _recognitionMissCounts.Clear();
         MeditationCards.Clear();
         EquipmentNames = ["", "", ""];

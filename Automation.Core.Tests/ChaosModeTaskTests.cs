@@ -42,7 +42,26 @@ public sealed class ChaosModeTaskTests
         var handled = await task.RunOnceAsync(context, CancellationToken.None);
 
         Assert.True(handled);
-        Assert.Single(input.Clicks);
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.920, 0.922);
+        Assert.InRange(click.Y, 0.930, 0.932);
+    }
+
+    [Fact]
+    public async Task ConfirmUsesStableFooterHotspotWhenOcrBoxShiftsLeft()
+    {
+        var frame = CreateFrame();
+        var result = CreateOcr("确认", new OcrTextRegion(1431, 813, 72, 45));
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, result, input);
+        var task = new ChaosModeTask();
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.True(handled);
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.920, 0.922);
+        Assert.InRange(click.Y, 0.930, 0.932);
     }
 
     [Fact]
@@ -211,6 +230,93 @@ public sealed class ChaosModeTaskTests
         Assert.InRange(click.Y, 0.911, 0.923);
     }
 
+    [Fact]
+    public async Task ChaosRewardSettlementExitsWhenSpecificFlashMissing()
+    {
+        var frame = CreateFrame();
+        var result = new OcrFrameResult(
+            "结算 获得",
+            0.99,
+            [
+                new OcrTextLine("结算", 0.99, new OcrTextRegion(860, 50, 120, 40)),
+                new OcrTextLine("获得", 0.99, new OcrTextRegion(1340, 335, 80, 40))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            result,
+            input,
+            new Dictionary<string, object>
+            {
+                ["领取奖励(只使用验证卡)"] = false,
+                ["首层刷特定闪光"] = true,
+                ["只打第一层"] = true
+            });
+        var task = new ChaosModeTask();
+        task.RunState.PassFinalBossCount = 1;
+        task.RunState.GetSpecificFlash = false;
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.True(handled);
+        Assert.Equal(1, task.RunState.SuccessRounds);
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.953, 0.965);
+        Assert.InRange(click.Y, 0.045, 0.057);
+    }
+
+    [Fact]
+    public async Task ChaosRewardSettlementClicksClaimWhenValidationRewardEnabled()
+    {
+        var frame = CreateFrame();
+        var result = new OcrFrameResult(
+            "结算 获得",
+            0.99,
+            [
+                new OcrTextLine("结算", 0.99, new OcrTextRegion(860, 50, 120, 40)),
+                new OcrTextLine("获得", 0.99, new OcrTextRegion(1340, 335, 80, 40))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(
+            frame,
+            result,
+            input,
+            new Dictionary<string, object>
+            {
+                ["领取奖励(只使用验证卡)"] = true
+            });
+        var task = new ChaosModeTask();
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.True(handled);
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.860, 0.870);
+        Assert.InRange(click.Y, 0.388, 0.400);
+    }
+
+    [Fact]
+    public async Task ChaosRewardClaimClicksClaimWhenValidationCardsRemain()
+    {
+        var frame = CreateFrame();
+        var result = new OcrFrameResult(
+            "获得 2/3",
+            0.99,
+            [
+                new OcrTextLine("获得", 0.99, new OcrTextRegion(850, 620, 120, 40)),
+                new OcrTextLine("2/3", 0.99, new OcrTextRegion(1500, 240, 80, 40))
+            ]);
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, result, input);
+        var task = new ChaosModeTask();
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.True(handled);
+        var click = Assert.Single(input.Clicks);
+        Assert.InRange(click.X, 0.563, 0.575);
+        Assert.InRange(click.Y, 0.705, 0.717);
+    }
     [Fact]
     public async Task LeaveClicksActiveButton()
     {
@@ -643,6 +749,22 @@ public sealed class ChaosModeTaskTests
     }
 
     [Fact]
+    public async Task EscapeButtonWithoutCommandOnNormalPageDoesNothing()
+    {
+        var frame = CreateFrame();
+        var result = CreateOcr("逃脱", new OcrTextRegion(1450, 800, 110, 50));
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, result, input);
+        var task = new ChaosModeTask();
+
+        await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.Empty(input.Clicks);
+        Assert.Empty(input.Keys);
+        Assert.False(task.RunState.IsEscaped);
+    }
+
+    [Fact]
     public async Task EscapePageWithoutCommandCancelsAndDoesNotMarkEscaped()
     {
         var frame = CreateFrame();
@@ -694,8 +816,10 @@ public sealed class ChaosModeTaskTests
             SuccessRounds = 4,
             NodeCount = 5,
             ReachFinalBoss = true,
-            IsEscaped = true
+            IsEscaped = true,
+            PendingRemovedCardCount = 2
         };
+        state.MeditationCards["剑雨"] = true;
 
         state.ResetLayer();
 
@@ -705,12 +829,20 @@ public sealed class ChaosModeTaskTests
         Assert.Equal(0, state.NodeCount);
         Assert.False(state.ReachFinalBoss);
         Assert.False(state.IsEscaped);
+        Assert.Equal(2, state.PendingRemovedCardCount);
+        Assert.True(state.MeditationCards["剑雨"]);
     }
     [Fact]
     public async Task CenterConfirmClicksMatchingButton()
     {
         var frame = CreateFrame();
-        var result = CreateOcr("确认", new OcrTextRegion(700, 300, 90, 34));
+        var result = new OcrFrameResult(
+            "确认",
+            0.99,
+            [
+                new OcrTextLine("确认", 0.99, new OcrTextRegion(700, 300, 90, 34)),
+                new OcrTextLine("取消", 0.99, new OcrTextRegion(900, 300, 90, 34))
+            ]);
         var input = new RecordingInputSink();
         var context = CreateContext(frame, result, input);
         var task = new ChaosModeTask();
@@ -775,7 +907,7 @@ public sealed class ChaosModeTaskTests
     }
 
     [Fact]
-    public async Task CopyClicksActiveButton()
+    public async Task CopyClicksActiveButtonOnlyOnceUntilRouteChanges()
     {
         var frame = CreateFrame();
         var result = CreateOcr("复制", new OcrTextRegion(1450, 800, 110, 50));
@@ -784,8 +916,10 @@ public sealed class ChaosModeTaskTests
         var task = new ChaosModeTask();
 
         var handled = await task.RunOnceAsync(context, CancellationToken.None);
+        var repeatedHandled = await task.RunOnceAsync(context, CancellationToken.None);
 
         Assert.True(handled);
+        Assert.True(repeatedHandled);
         Assert.Single(input.Clicks);
     }
 
@@ -955,6 +1089,22 @@ public sealed class ChaosModeTaskTests
     }
 
     [Fact]
+    public void AdvanceSequenceNeverRegressesUnderConcurrentWriters()
+    {
+        long sequence = 0;
+        ChaosModeTask.AdvanceSequence(ref sequence, 100);
+        ChaosModeTask.AdvanceSequence(ref sequence, 10);
+
+        Parallel.For(0, 5_000, value =>
+        {
+            var candidate = value;
+            ChaosModeTask.AdvanceSequence(ref sequence, candidate);
+        });
+
+        Assert.Equal(4_999, Volatile.Read(ref sequence));
+    }
+
+    [Fact]
     public void ResetMissionPreservesOnlyRunTotals()
     {
         var state = new ChaosRunState
@@ -1045,6 +1195,36 @@ public sealed class ChaosModeTaskTests
         var click = Assert.Single(input.Clicks);
         Assert.InRange(click.X, 0.659, 0.671);
         Assert.InRange(click.Y, 0.893, 0.905);
+    }
+
+    [Fact]
+    public async Task NegotiationDoesNotClickWithoutFailureText()
+    {
+        var frame = CreateFrame();
+        var result = CreateOcr("谈判进行中", new OcrTextRegion(740, 590, 120, 50));
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, result, input);
+        var task = new ChaosModeTask();
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.False(handled);
+        Assert.Empty(input.Clicks);
+    }
+
+    [Fact]
+    public async Task NegotiationDoesNotClickForOtherFailureText()
+    {
+        var frame = CreateFrame();
+        var result = CreateOcr("同步失败", new OcrTextRegion(740, 590, 120, 50));
+        var input = new RecordingInputSink();
+        var context = CreateContext(frame, result, input);
+        var task = new ChaosModeTask();
+
+        var handled = await task.RunOnceAsync(context, CancellationToken.None);
+
+        Assert.False(handled);
+        Assert.Empty(input.Clicks);
     }
     [Fact]
     public async Task ExpeditionResultCountsSuccessWhenCompleted()
@@ -1222,7 +1402,8 @@ public sealed class ChaosModeTaskTests
                 0.99,
                 [
                     new OcrTextLine("确定要跳过吗", 0.99, new OcrTextRegion(690, 390, 200, 35)),
-                    new OcrTextLine("确认", 0.99, new OcrTextRegion(1060, 568, 80, 25))
+                    new OcrTextLine("确认", 0.99, new OcrTextRegion(1060, 568, 80, 25)),
+                    new OcrTextLine("取消", 0.99, new OcrTextRegion(900, 568, 80, 25))
                 ]),
             confirmationInput);
 
@@ -1454,6 +1635,7 @@ public sealed class ChaosModeTaskTests
     private sealed class RecordingInputSink : IInputSink
     {
         public List<RelativePoint> Clicks { get; } = [];
+        public List<InputKey> Keys { get; } = [];
 
         public ValueTask ClickAsync(
             RelativePoint point,
@@ -1473,7 +1655,10 @@ public sealed class ChaosModeTaskTests
         public ValueTask KeyAsync(
             InputKey key,
             CancellationToken cancellationToken = default)
-            => ValueTask.CompletedTask;
+        {
+            Keys.Add(key);
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask TextAsync(
             string text,

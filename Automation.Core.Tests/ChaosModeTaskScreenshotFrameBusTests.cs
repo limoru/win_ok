@@ -71,7 +71,7 @@ public sealed class ChaosModeTaskScreenshotFrameBusTests
     }
 
     [Fact]
-    public async Task RemoveCardSelectionScreenshotSelectsCardBeforeRemoveButton()
+    public async Task RemoveCardSelectionScreenshotScrollsBeforeFallback()
     {
         var screenshotPath = Path.Combine(
             AppContext.BaseDirectory,
@@ -116,13 +116,13 @@ public sealed class ChaosModeTaskScreenshotFrameBusTests
             .WaitAsync(TimeSpan.FromSeconds(2));
         Assert.True(handled);
 
-        await input.Clicked.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        var click = Assert.Single(input.Clicks);
-        Assert.Contains(cards, card =>
-            Math.Abs(click.X - card.X) <= 0.003
-            && Math.Abs(click.Y - card.Y) <= 0.003);
-        Assert.True(click.Y < 0.82, $"移除选牌页不应先点击底部移除按钮，实际点击 ({click.X}, {click.Y})。");
-        Assert.Equal(1, task.RunState.PendingRemovedCardCount);
+        await input.Scrolled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var scroll = Assert.Single(input.Scrolls);
+        Assert.InRange(scroll.Point.X, 0.250, 0.252);
+        Assert.InRange(scroll.Point.Y, 0.734, 0.736);
+        Assert.Equal(-3, scroll.WheelNotches);
+        Assert.Empty(input.Clicks);
+        Assert.Equal(0, task.RunState.PendingRemovedCardCount);
         Assert.Equal(0, task.RunState.RemovedCardCount);
         Assert.Contains(logs.Messages, message =>
             message.Contains("检测到卡牌移除选择", StringComparison.Ordinal));
@@ -234,6 +234,9 @@ public sealed class ChaosModeTaskScreenshotFrameBusTests
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public List<RelativePoint> Clicks { get; } = [];
+        public TaskCompletionSource<bool> Scrolled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public List<(RelativePoint Point, int WheelNotches)> Scrolls { get; } = [];
 
         public ValueTask ClickAsync(
             RelativePoint point,
@@ -244,17 +247,22 @@ public sealed class ChaosModeTaskScreenshotFrameBusTests
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask HoverClickAsync(
-            RelativePoint point,
-            CancellationToken cancellationToken = default)
-            => ClickAsync(point, cancellationToken);
-
         public ValueTask SwipeAsync(
             RelativePoint from,
             RelativePoint to,
             TimeSpan duration,
             CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;
+
+        public ValueTask ScrollAsync(
+            RelativePoint point,
+            int wheelNotches,
+            CancellationToken cancellationToken = default)
+        {
+            Scrolls.Add((point, wheelNotches));
+            Scrolled.TrySetResult(true);
+            return ValueTask.CompletedTask;
+        }
 
         public ValueTask KeyAsync(InputKey key, CancellationToken cancellationToken = default)
             => ValueTask.CompletedTask;

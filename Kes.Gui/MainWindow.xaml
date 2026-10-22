@@ -1198,41 +1198,41 @@
                                         </HeaderedContentControl>
 
                                         <Border Height="12" />
-<HeaderedContentControl Header="判断点标注样本"
+<HeaderedContentControl Header="派发样本归档"
                                                         Style="{StaticResource CardControl}">
                                             <StackPanel>
                                                 <Border Style="{StaticResource SettingRowBorder}">
                                                     <Grid>
                                                         <StackPanel Margin="0,0,12,0">
-                                                            <TextBlock Text="自动捕获" Style="{StaticResource BodyText}" />
-                                                            <TextBlock Text="任务到达中心确认、结算、商店、休息和路线选择时保存一帧；同一判断点在冷却时间内只保存一次。"
+                                                            <TextBlock Text="自动归档" Style="{StaticResource BodyText}" />
+                                                            <TextBlock Text="开启后，只保存真正投递给消费者的截图；按 consumerId 分类，每次运行每个消费者只保留 1 张，跨运行累计最多 20 张。"
                                                                        Style="{StaticResource SecondaryText}"
                                                                        TextWrapping="Wrap"
                                                                        Margin="0,3,0,0" />
                                                         </StackPanel>
-                                                        <ToggleButton IsChecked="{Binding IsDecisionSnapshotCaptureEnabled, Mode=TwoWay}"
+                                                        <ToggleButton IsChecked="{Binding IsFrameSampleArchiveEnabled, Mode=TwoWay}"
                                                                       Style="{StaticResource SwitchToggle}"
                                                                       HorizontalAlignment="Right"
                                                                       VerticalAlignment="Center"
-                                                                      AutomationProperties.AutomationId="DeveloperSnapshotAutoToggle" />
+                                                                      AutomationProperties.AutomationId="DeveloperFrameSampleAutoToggle" />
                                                     </Grid>
                                                 </Border>
                                                 <Border Style="{StaticResource SettingRowBorder}">
                                                     <StackPanel>
                                                         <TextBlock Text="样本目录" Style="{StaticResource BodyText}" />
-                                                        <TextBlock Text="{Binding DecisionSnapshotOutputDirectory}"
+                                                        <TextBlock Text="{Binding FrameSampleOutputDirectory}"
                                                                    Style="{StaticResource CaptionText}"
                                                                    TextWrapping="Wrap"
                                                                    Margin="0,4,0,8" />
-                                                        <Button Command="{Binding OpenDecisionSnapshotFolderCommand}"
+                                                        <Button Command="{Binding OpenFrameSampleFolderCommand}"
                                                                 Style="{StaticResource BaseButton}"
                                                                 HorizontalAlignment="Left"
                                                                 Content="打开样本目录"
-                                                                AutomationProperties.AutomationId="DeveloperSnapshotOpenFolderButton" />
+                                                                AutomationProperties.AutomationId="DeveloperFrameSampleOpenFolderButton" />
                                                     </StackPanel>
                                                 </Border>
                                                 <Border Style="{StaticResource SettingRowBorder}" BorderThickness="0">
-                                                    <TextBlock Text="{Binding DecisionSnapshotStatusText}"
+                                                    <TextBlock Text="{Binding FrameSampleStatusText}"
                                                                Style="{StaticResource SecondaryText}"
                                                                TextWrapping="Wrap" />
                                                 </Border>

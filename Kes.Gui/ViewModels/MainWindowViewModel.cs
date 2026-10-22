@@ -78,12 +78,11 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     private string _developerTemplatePath = string.Empty;
     private string _developerTemplateThresholdText = "0.80";
     private string _developerMatchResultText = "尚未执行模板匹配";
-    private string _decisionSnapshotStatusText = "自动捕获未启用";
+    private string _frameSampleStatusText = "派发样本归档已启用：每次运行每个消费者保留 1 张，累计最多 20 张。";
     private ImageSource? _developerPreviewImage;
     private BgraFrame? _developerFrameData;
     private int _developerFrameWidth;
     private int _developerFrameHeight;
-    private long _developerFrameSequence;
     private DateTimeOffset _developerFrameCapturedAt = DateTimeOffset.Now;
     private int _selectedPageIndex;
     private bool _isBusy;
@@ -132,9 +131,11 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         SaveDeveloperFrameCommand = new RelayCommand(SaveDeveloperFrame);
         BrowseDeveloperTemplateCommand = new RelayCommand(BrowseDeveloperTemplate);
         RunDeveloperTemplateMatchCommand = new RelayCommand(RunDeveloperTemplateMatch);
-        OpenDecisionSnapshotFolderCommand = new RelayCommand(OpenDecisionSnapshotFolder);
-        DecisionSnapshots = new DecisionSnapshotService(GetDecisionSnapshotDirectory(), _dispatcher);
-        DecisionSnapshots.SnapshotSaved += OnDecisionSnapshotSaved;
+        OpenFrameSampleFolderCommand = new RelayCommand(OpenFrameSampleFolder);
+        FrameSamples = new FrameSampleArchiveService(GetFrameSampleDirectory());
+        FrameSamples.IsEnabled = true;
+        FrameSamples.SampleArchived += OnFrameSampleArchived;
+        FrameSamples.SampleArchiveFailed += OnFrameSampleArchiveFailed;
         ConfigProfileStore.Load();
         try
         {
@@ -194,8 +195,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     public RelayCommand SaveDeveloperFrameCommand { get; }
     public RelayCommand BrowseDeveloperTemplateCommand { get; }
     public RelayCommand RunDeveloperTemplateMatchCommand { get; }
-    public RelayCommand OpenDecisionSnapshotFolderCommand { get; }
-    public DecisionSnapshotService DecisionSnapshots { get; }
+    public RelayCommand OpenFrameSampleFolderCommand { get; }
+    public FrameSampleArchiveService FrameSamples { get; }
 
     public TargetCandidateViewModel? SelectedTarget
     {
@@ -496,30 +497,30 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         private set => SetProperty(ref _developerMatchResultText, value);
     }
 
-    public bool IsDecisionSnapshotCaptureEnabled
+    public bool IsFrameSampleArchiveEnabled
     {
-        get => DecisionSnapshots.IsEnabled;
+        get => FrameSamples.IsEnabled;
         set
         {
-            if (DecisionSnapshots.IsEnabled == value)
+            if (FrameSamples.IsEnabled == value)
             {
                 return;
             }
 
-            DecisionSnapshots.IsEnabled = value;
+            FrameSamples.IsEnabled = value;
             OnPropertyChanged();
-            DecisionSnapshotStatusText = value
-                ? "自动捕获已启用，任务到关键判断点时保存一次样本。"
-                : "自动捕获已暂停，仍可在 1:1 预览中手动生成样本。";
+            FrameSampleStatusText = value
+                ? "派发样本归档已启用：每个消费者最多保留 20 张不重复截图，已有样本继续保留。"
+                : "派发样本归档已暂停。";
         }
     }
 
-    public string DecisionSnapshotOutputDirectory => DecisionSnapshots.OutputDirectory;
+    public string FrameSampleOutputDirectory => FrameSamples.OutputDirectory;
 
-    public string DecisionSnapshotStatusText
+    public string FrameSampleStatusText
     {
-        get => _decisionSnapshotStatusText;
-        private set => SetProperty(ref _decisionSnapshotStatusText, value);
+        get => _frameSampleStatusText;
+        private set => SetProperty(ref _frameSampleStatusText, value);
     }
 
     public int TargetCount => DiscoveredTargets.Count;
@@ -557,7 +558,8 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
 
         _disposed = true;
-        DecisionSnapshots.SnapshotSaved -= OnDecisionSnapshotSaved;
+        FrameSamples.SampleArchived -= OnFrameSampleArchived;
+        FrameSamples.SampleArchiveFailed -= OnFrameSampleArchiveFailed;
         foreach (var session in Sessions)
         {
             session.ActivityReported -= OnSessionActivityReported;
@@ -565,6 +567,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             await session.DisposeAsync();
         }
 
+        FrameSamples.Dispose();
         _monitorCancellation.Cancel();
 
         if (_monitorTask is not null)
@@ -866,7 +869,7 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
             accountLabel,
             CreateSessionProvider,
             ConfigProfileStore,
-            decisionSnapshots: DecisionSnapshots);
+            frameSamples: FrameSamples);
 
         session.ActivityReported += OnSessionActivityReported;
         session.LogReported += OnSessionLogReported;
@@ -893,14 +896,44 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         AppendLog("session", $"已移除 {session.SessionId}");
     }
 
-    private void OnDecisionSnapshotSaved(
+    private void OnFrameSampleArchived(
         object? sender,
-        DecisionSnapshotSavedEventArgs eventArgs)
+        FrameSampleArchivedEventArgs eventArgs)
     {
-        DecisionSnapshotStatusText = $"样本已保存：{eventArgs.Request.PageLabel}";
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() => OnFrameSampleArchived(sender, eventArgs)));
+            return;
+        }
+
+        var fileName = Path.GetFileName(eventArgs.Result.ImagePath)
+                       ?? eventArgs.Result.ConsumerId;
+        FrameSampleStatusText = $"样本已保存：{eventArgs.Result.ConsumerId} · {eventArgs.Result.SavedCount}/{eventArgs.Result.Limit} · {fileName}";
         AppendLog(
             "developer",
-            $"判断样本已保存：{eventArgs.Request.PageLabel}（{eventArgs.Request.ReasonId}）→ {eventArgs.Directory}");
+            $"派发样本已保存：{eventArgs.Result.ConsumerId} · {eventArgs.Result.SavedCount}/{eventArgs.Result.Limit} -> {eventArgs.Result.ImagePath}",
+            "debug");
+    }
+
+    private void OnFrameSampleArchiveFailed(
+        object? sender,
+        FrameSampleArchiveFailedEventArgs eventArgs)
+    {
+        if (!_dispatcher.CheckAccess())
+        {
+            _dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() => OnFrameSampleArchiveFailed(sender, eventArgs)));
+            return;
+        }
+
+        FrameSampleStatusText = $"样本保存失败：{eventArgs.Request.ConsumerId} · {eventArgs.Message}";
+        AppendLog(
+            "developer",
+            $"派发样本保存失败：{eventArgs.Request.ConsumerId} · 帧 #{eventArgs.Request.FrameSequence} · {eventArgs.Message}",
+            "warning");
     }
 
     private void OnSessionLogReported(object? sender, SessionLogChangedEventArgs eventArgs)
@@ -1028,53 +1061,6 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         DeveloperPointerSurfaceText = "--";
     }
 
-    public async ValueTask<string?> CaptureDeveloperDecisionSnapshotAsync(
-        string reasonId,
-        OcrFrameResult? ocr,
-        CancellationToken cancellationToken = default)
-    {
-        var frame = _developerFrameData;
-        if (frame is null)
-        {
-            DecisionSnapshotStatusText = "没有可用于标注的截图。";
-            return null;
-        }
-
-        var definition = DecisionSnapshotCatalog.Resolve(reasonId);
-        var sessionId = SelectedSession?.SessionId
-                        ?? SelectedTarget?.Binding.ProviderInstanceId
-                        ?? "developer";
-        var request = definition.CreateRequest(
-            sessionId,
-            _developerFrameSequence,
-            _developerFrameCapturedAt);
-
-        try
-        {
-            var directory = await DecisionSnapshots.CaptureAsync(
-                    request,
-                    frame,
-                    ocr,
-                    force: true,
-                    cancellationToken)
-                .ConfigureAwait(true);
-            if (directory is null)
-            {
-                DecisionSnapshotStatusText = "样本未保存。";
-                return null;
-            }
-
-            DecisionSnapshotStatusText = $"样本已保存：{Path.GetFileName(directory)}";
-            return directory;
-        }
-        catch (Exception exception)
-        {
-            DecisionSnapshotStatusText = $"样本保存失败：{exception.Message}";
-            AppendLog("developer", $"样本保存失败：{exception.Message}");
-            return null;
-        }
-    }
-
     private async Task CaptureDeveloperFrameAsync()
     {
         if (SelectedTarget is null)
@@ -1109,7 +1095,6 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
 
             _developerFrameWidth = frame.Width;
             _developerFrameHeight = frame.Height;
-            _developerFrameSequence = 0;
             _developerFrameCapturedAt = DateTimeOffset.Now;
             _developerFrameData = new BgraFrame(frame.Width, frame.Height, frame.BgraPixels);
             DeveloperPreviewImage = image;
@@ -1220,20 +1205,20 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private void OpenDecisionSnapshotFolder()
+    private void OpenFrameSampleFolder()
     {
         try
         {
-            Directory.CreateDirectory(DecisionSnapshots.OutputDirectory);
-            Process.Start(new ProcessStartInfo(DecisionSnapshots.OutputDirectory)
+            Directory.CreateDirectory(FrameSamples.OutputDirectory);
+            Process.Start(new ProcessStartInfo(FrameSamples.OutputDirectory)
             {
                 UseShellExecute = true
             });
-            DecisionSnapshotStatusText = "已打开判断样本目录。";
+            FrameSampleStatusText = "已打开派发样本目录。";
         }
         catch (Exception exception)
         {
-            DecisionSnapshotStatusText = $"无法打开样本目录：{exception.Message}";
+            FrameSampleStatusText = $"无法打开样本目录：{exception.Message}";
             AppendLog("developer", $"无法打开样本目录：{exception.Message}");
         }
     }
@@ -1304,8 +1289,21 @@ public sealed class MainWindowViewModel : ObservableObject, IAsyncDisposable
     private static string GetDiagnosticsDirectory()
         => Path.Combine(AppContext.BaseDirectory, "diagnostics");
 
-    private static string GetDecisionSnapshotDirectory()
-        => Path.Combine(AppContext.BaseDirectory, "developer-annotations");
+    private static string GetFrameSampleDirectory()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "AutomationPlatform.slnx")))
+            {
+                return Path.Combine(directory.FullName, "frame-samples");
+            }
+
+            directory = directory.Parent;
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "frame-samples");
+    }
 
     private void OnTargetCandidatePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
